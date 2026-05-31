@@ -7,6 +7,7 @@ const DEFAULT_SOURCES = ['email', 'slack', 'google_drive', 'conference_bridge', 
 export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
   const [connectors, setConnectors] = useState([]);
   const [readiness, setReadiness] = useState([]);
+  const [setup, setSetup] = useState([]);
   const [selectedSources, setSelectedSources] = useState(new Set(DEFAULT_SOURCES));
   const [query, setQuery] = useState('');
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('atlas_unified_search_auth_token') || '');
@@ -26,12 +27,14 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
   async function loadConnectors() {
     setState((current) => ({ ...current, error: '' }));
     try {
-      const [connectorData, readinessData] = await Promise.all([
+      const [connectorData, readinessData, setupData] = await Promise.all([
         apiRequest(apiBaseUrl, '/v1/connectors', { authToken }),
         apiRequest(apiBaseUrl, '/v1/connectors/readiness', { authToken }),
+        apiRequest(apiBaseUrl, '/v1/connectors/setup', { authToken }).catch(() => ({ setup: [] })),
       ]);
       setConnectors(connectorData.connectors || []);
       setReadiness(readinessData.checks || []);
+      setSetup(setupData.setup || []);
     } catch (error) {
       setState((current) => ({ ...current, error: error.message }));
     }
@@ -45,6 +48,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
 
   const sourceStatuses = useMemo(() => Object.fromEntries((run?.sourceStatuses || []).map((item) => [item.source, item])), [run]);
   const readinessBySource = useMemo(() => Object.fromEntries(readiness.map((item) => [item.source, item])), [readiness]);
+  const setupBySource = useMemo(() => Object.fromEntries(setup.map((item) => [item.source, item])), [setup]);
 
   async function startSearch(event) {
     event?.preventDefault();
@@ -195,6 +199,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
           {DEFAULT_SOURCES.map((source) => {
             const connector = connectors.find((item) => item.source === source);
             const check = readinessBySource[source];
+            const setupGuide = setupBySource[source];
             const status = sourceStatuses[source];
             return (
               <div key={source} className={`connector-card ${check?.ready ? 'ready' : ''}`}>
@@ -223,6 +228,9 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
                       <span key={`${source}-${requirement.name}`} className={requirement.configured ? 'ok' : ''}>{requirement.name}</span>
                     ))}
                   </div>
+                )}
+                {setupGuide && !setupGuide.ready && (
+                  <p className="setup-hint">{setupGuide.nextAction}</p>
                 )}
               </div>
             );

@@ -58,6 +58,15 @@ test('api auth boundary blocks protected endpoints when enabled', async () => {
     assert.equal(readinessBody.success, true);
     assert.equal(readinessBody.report.readyForProductionTesting, false);
     assert.ok(readinessBody.report.credentialBlockedSources.some((item) => item.source === 'slack'));
+
+    const setup = await fetch(`${base}/v1/connectors/setup`, {
+      headers: { Authorization: 'Bearer test-token' },
+    }).then((response) => response.json());
+    assert.equal(setup.success, true);
+    const slack = setup.setup.find((item) => item.source === 'slack');
+    assert.ok(slack.missing.includes('SLACK_BOT_TOKEN'));
+    assert.match(slack.nextAction, /Slack app/);
+    assert.ok(slack.liveSmoke.env.includes('UNIFIED_SEARCH_SMOKE_SLACK_CHANNEL_IDS'));
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });

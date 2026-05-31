@@ -64,6 +64,15 @@ export async function createApp(config) {
     }
   });
 
+  app.get('/v1/connectors/setup', async (req, res) => {
+    try {
+      const checks = await registry.readiness(req.query.source || '');
+      res.json({ success: true, setup: connectorSetupGuide(checks) });
+    } catch (error) {
+      res.status(400).json({ success: false, error: error.message });
+    }
+  });
+
   app.get('/v1/production-readiness', async (req, res) => {
     try {
       await refreshStore(store);
@@ -359,4 +368,83 @@ function productionReadinessReport({ config, store, queue, assistant, connectorC
       ...(futureSources.some((item) => item.source === 'data_fabric' && !item.ready) ? ['Define and configure the Data Fabric API contract before claiming live Data Fabric readiness.'] : []),
     ],
   };
+}
+
+function connectorSetupGuide(checks) {
+  return checks.map((check) => {
+    const missing = (check.requirements || [])
+      .filter((requirement) => !requirement.configured && !requirement.optional)
+      .map((requirement) => requirement.name);
+    const base = {
+      source: check.source,
+      ready: Boolean(check.ready),
+      status: check.status,
+      missing,
+      requirements: check.requirements || [],
+      nextAction: setupNextAction(check.source, missing, check),
+      liveSmoke: liveSmokeGuide(check.source),
+    };
+    return base;
+  });
+}
+
+function setupNextAction(source, missing, check) {
+  if (check.ready) {
+    return 'Run production smoke reindex/search for this connector with a small known-readable scope.';
+  }
+  if (source === 'slack') {
+    return missing.length
+      ? 'Install the Slack app, invite the bot to at least one channel, then wire SLACK_BOT_TOKEN and SLACK_CHANNEL_IDS into both Container Apps.'
+      : 'Slack configuration exists but readiness failed; verify bot scopes and channel membership.';
+  }
+  if (source === 'google_drive') {
+    return missing.length
+      ? 'Create Google Drive OAuth refresh-token or service-account credentials, grant file/folder access, then wire the Google secret set into both Container Apps.'
+      : 'Google Drive configuration exists but readiness failed; verify consent, refresh token validity, service-account sharing, and Drive API access.';
+  }
+  if (source === 'data_fabric') {
+    return missing.includes('DATA_FABRIC_BASE_URL')
+      ? 'Deploy or identify the Data Fabric HTTP service and wire DATA_FABRIC_BASE_URL into both Container Apps.'
+      : 'Data Fabric configuration exists but readiness failed; verify /health and /records contract responses.';
+  }
+  if (source === 'conference_bridge') {
+    return 'Wire AZURE_STORAGE_CONNECTION_STRING and CONFERENCE_BLOB_CONTAINERS, then run the conference bridge live smoke.';
+  }
+  if (source === 'knowledge_base') {
+    return 'Wire KNOWLEDGE_BASE_ROOT to a mounted or image-bundled docs root, then run the knowledge base live smoke.';
+  }
+  if (source === 'email') {
+    return 'Wire EMAIL_VECTOR_SEARCH_URL and EMAIL_READINESS_USER_EMAIL to the Atlas email backend, then run email readiness and search smoke.';
+  }
+  return 'Configure required connector settings and run readiness.';
+}
+
+function liveSmokeGuide(source) {
+  const guides = {
+    slack: {
+      command: 'UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production',
+      env: ['UNIFIED_SEARCH_SMOKE_SLACK_CHANNEL_IDS', 'UNIFIED_SEARCH_SMOKE_SLACK_QUERY'],
+    },
+    google_drive: {
+      command: 'UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production',
+      env: ['UNIFIED_SEARCH_SMOKE_GDRIVE_FOLDER_IDS', 'UNIFIED_SEARCH_SMOKE_GDRIVE_QUERY'],
+    },
+    data_fabric: {
+      command: 'UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production',
+      env: ['UNIFIED_SEARCH_SMOKE_DATA_FABRIC_DATASET', 'UNIFIED_SEARCH_SMOKE_DATA_FABRIC_QUERY'],
+    },
+    conference_bridge: {
+      command: 'UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production',
+      env: ['UNIFIED_SEARCH_SMOKE_CONFERENCE_PREFIX'],
+    },
+    knowledge_base: {
+      command: 'UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production',
+      env: [],
+    },
+    email: {
+      command: 'npm run smoke:production:ui && UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production',
+      env: [],
+    },
+  };
+  return guides[source] || { command: 'UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production', env: [] };
 }
