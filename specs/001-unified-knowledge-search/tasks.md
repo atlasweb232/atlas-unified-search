@@ -19,7 +19,7 @@
 - [x] Add embedding provider interface.
 - [x] Add JSON store and pgvector-ready store boundary.
 - [x] Add hybrid search service.
-- [ ] Add React `UnifiedSearchWidget`.
+- [x] Add React `UnifiedSearchWidget`.
 - [x] Add fixture-based tests.
 
 ## M2: Slack
@@ -33,7 +33,7 @@
 
 ## M3: Google Drive
 
-- [ ] Add Google auth config.
+- [x] Add Google auth config.
 - [x] Implement files listing.
 - [x] Implement blob downloads.
 - [x] Implement Google Workspace export.
@@ -72,18 +72,18 @@
 
 ## M8: Federated Search Workspace UI
 
-- [ ] Add `UnifiedSearchWorkspace` React component.
-- [ ] Add left connector/source panel.
-- [ ] Add source icons for email, Slack, Google Drive, conference bridge,
+- [x] Add `UnifiedSearchWorkspace` React component.
+- [x] Add left connector/source panel.
+- [x] Add source icons for email, Slack, Google Drive, conference bridge,
       knowledge base, and data fabric.
-- [ ] Add connector configured/syncing/error status display.
-- [ ] Add source include/exclude selection.
-- [ ] Add center search box.
-- [ ] Add source-agent status row for active query.
-- [ ] Add expandable result line items.
-- [ ] Add attachment/link rendering inside expanded rows.
-- [ ] Add result multi-select for assistant actions.
-- [ ] Add right assistant/chat panel.
+- [x] Add connector configured/syncing/error status display.
+- [x] Add source include/exclude selection.
+- [x] Add center search box.
+- [x] Add source-agent status row for active query.
+- [x] Add expandable result line items.
+- [x] Add attachment/link rendering inside expanded rows.
+- [x] Add result multi-select for assistant actions.
+- [x] Add right assistant/chat panel.
 
 ## M9: Parallel Source Search Agents
 
@@ -100,9 +100,9 @@
 - [x] Add pluggable `ChatProvider` interface.
 - [x] Add deterministic mock provider for tests.
 - [x] Add OpenAI-compatible provider adapter.
-- [ ] Add Azure OpenAI provider placeholder.
-- [ ] Add Anthropic-compatible provider placeholder.
-- [ ] Add Cerebras-compatible provider placeholder.
+- [x] Add Azure OpenAI provider placeholder.
+- [x] Add Anthropic-compatible provider placeholder.
+- [x] Add Cerebras-compatible provider placeholder.
 - [x] Add assistant action API.
 - [x] Add action types for summarize, Q&A, draft email, action items, compare
       sources, create PowerPoint, and create PDF.
