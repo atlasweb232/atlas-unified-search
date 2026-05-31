@@ -111,7 +111,7 @@ async function readiness(url, authToken) {
   ]);
 
   return {
-    connectorReadiness: connectors.body?.connectors?.map((item) => ({
+    connectorReadiness: connectors.body?.checks?.map((item) => ({
       source: item.source,
       ready: item.ready,
       status: item.status,

@@ -149,6 +149,25 @@ does not verify real Slack Web API access without `SLACK_BOT_TOKEN` and
 `SLACK_CHANNEL_IDS`. Google Drive is only live-tested after readiness is
 `ready:true` and a real `/v1/reindex/google_drive` run succeeds.
 
+When Slack, Google Drive, or Data Fabric readiness is `ready:true`,
+`smoke:production` now performs a real reindex and search for that connector.
+Use small, known-readable smoke scopes so failures are actionable:
+
+```bash
+export UNIFIED_SEARCH_SMOKE_LIVE_LIMIT=5
+export UNIFIED_SEARCH_SMOKE_SLACK_CHANNEL_IDS='C0123456789'
+export UNIFIED_SEARCH_SMOKE_SLACK_QUERY='known phrase in smoke Slack channel'
+export UNIFIED_SEARCH_SMOKE_GDRIVE_FOLDER_IDS='folder-id-with-smoke-doc'
+export UNIFIED_SEARCH_SMOKE_GDRIVE_QUERY='known phrase in smoke Drive doc'
+export UNIFIED_SEARCH_SMOKE_DATA_FABRIC_DATASET='smoke'
+export UNIFIED_SEARCH_SMOKE_DATA_FABRIC_QUERY='known smoke record phrase'
+UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production
+```
+
+If a live connector is configured but indexes zero documents, the smoke test
+fails. That usually means the bot/service account can authenticate but cannot
+read the configured channel, folder, or dataset.
+
 If `conference_bridge` readiness is `ready:true`, `smoke:production` also runs
 a live Blob transcript reindex/search using
 `UNIFIED_SEARCH_SMOKE_CONFERENCE_PREFIX`, defaulting to `smoke/`.

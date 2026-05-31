@@ -6,6 +6,7 @@ const mode = process.env.UNIFIED_SEARCH_SMOKE_MODE || 'inline';
 const jobPollAttempts = Number(process.env.UNIFIED_SEARCH_SMOKE_JOB_POLL_ATTEMPTS || 60);
 const jobPollIntervalMs = Number(process.env.UNIFIED_SEARCH_SMOKE_JOB_POLL_INTERVAL_MS || 5000);
 const marker = `unified search ${mode} smoke ${Date.now()}`;
+const liveLimit = Number(process.env.UNIFIED_SEARCH_SMOKE_LIVE_LIMIT || 5);
 
 async function request(path, options = {}) {
   const response = await fetch(`${base}${path}`, {
@@ -111,15 +112,42 @@ assert(action.data.actionJob.artifactIds?.length, 'assistant action did not crea
 console.log('assistant artifact from fixture pipeline ok', { actionId: action.data.actionJob.id, artifactIds: action.data.actionJob.artifactIds });
 
 if (readinessBySource.slack?.ready) {
-  console.log('slack live connector ready; run /v1/reindex/slack with production channel options to test real Slack ingestion');
+  await liveConnectorSmoke({
+    source: 'slack',
+    query: process.env.UNIFIED_SEARCH_SMOKE_SLACK_QUERY || 'meeting customer support project',
+    options: {
+      ...(listEnv('UNIFIED_SEARCH_SMOKE_SLACK_CHANNEL_IDS').length ? { channelIds: listEnv('UNIFIED_SEARCH_SMOKE_SLACK_CHANNEL_IDS') } : {}),
+      limit: liveLimit,
+    },
+  });
 } else {
   console.log('slack live connector skipped', { reason: 'missing Slack bot token/channel IDs or readiness failed', status: readinessBySource.slack?.status || 'not_reported' });
 }
 
 if (readinessBySource.google_drive?.ready) {
-  console.log('google drive live connector ready; run /v1/reindex/google_drive with production folder options to test real Drive ingestion');
+  await liveConnectorSmoke({
+    source: 'google_drive',
+    query: process.env.UNIFIED_SEARCH_SMOKE_GDRIVE_QUERY || 'document project support',
+    options: {
+      ...(listEnv('UNIFIED_SEARCH_SMOKE_GDRIVE_FOLDER_IDS').length ? { folderIds: listEnv('UNIFIED_SEARCH_SMOKE_GDRIVE_FOLDER_IDS') } : {}),
+      limit: liveLimit,
+    },
+  });
 } else {
   console.log('google drive live connector skipped', { reason: 'missing Google OAuth/service-account config or readiness failed', status: readinessBySource.google_drive?.status || 'not_reported' });
+}
+
+if (readinessBySource.data_fabric?.ready) {
+  await liveConnectorSmoke({
+    source: 'data_fabric',
+    query: process.env.UNIFIED_SEARCH_SMOKE_DATA_FABRIC_QUERY || 'customer event operational record',
+    options: {
+      ...(process.env.UNIFIED_SEARCH_SMOKE_DATA_FABRIC_DATASET ? { dataset: process.env.UNIFIED_SEARCH_SMOKE_DATA_FABRIC_DATASET } : {}),
+      limit: liveLimit,
+    },
+  });
+} else {
+  console.log('data fabric live source skipped', { status: readinessBySource.data_fabric?.status || 'not_reported' });
 }
 
 if (readinessBySource.conference_bridge?.ready) {
@@ -207,6 +235,57 @@ async function waitForJob(jobId) {
     if (job?.status === 'completed' || job?.status === 'failed') return job;
   }
   throw new Error(`job ${jobId} did not finish`);
+}
+
+async function liveConnectorSmoke({ source, query, options = {} }) {
+  const liveTenantId = `${tenantId}_${source}_live`;
+  const liveUserId = `${userId}_${source}_live`;
+  const reindex = await request(`/v1/reindex/${source}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      tenantId: liveTenantId,
+      userId: liveUserId,
+      wait: true,
+      options,
+    }),
+  });
+  assert(reindex.ok, `${source} live reindex failed: ${JSON.stringify(reindex.data)}`);
+  assert(reindex.data.indexed >= 1, `${source} live reindex returned no documents; configure a smoke channel/folder/dataset with at least one readable item`);
+
+  const search = await request('/v1/search', {
+    method: 'POST',
+    body: JSON.stringify({
+      tenantId: liveTenantId,
+      userId: liveUserId,
+      query,
+      sources: [source],
+      limit: liveLimit,
+    }),
+  });
+  assert(search.ok && search.data.results?.length, `${source} live search failed: ${JSON.stringify(search.data)}`);
+
+  await request('/v1/documents', {
+    method: 'DELETE',
+    body: JSON.stringify({
+      tenantId: liveTenantId,
+      userId: liveUserId,
+      source,
+      resetCheckpoints: true,
+    }),
+  });
+
+  console.log(`${source} live source ok`, {
+    indexed: reindex.data.indexed,
+    count: search.data.results.length,
+    query,
+  });
+}
+
+function listEnv(name) {
+  return String(process.env[name] || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function summarizeHealth(data) {
