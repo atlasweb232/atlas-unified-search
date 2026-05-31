@@ -12,4 +12,7 @@
 - [x] Production vector store recommendation captured.
 - [x] Implementation skeleton created.
 - [x] Source fixture tests added.
+- [x] Three-panel search workspace requirements captured.
+- [x] Parallel source-agent search requirements captured.
+- [x] Pluggable LLM/action/artifact requirements captured.
 - [ ] Deployment target finalized.

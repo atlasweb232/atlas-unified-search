@@ -19,6 +19,44 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SearchResponse"
+  /v1/search-runs:
+    post:
+      summary: Start a federated search run across selected source agents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "202":
+          description: Search run accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchRunResponse"
+  /v1/search-runs/{searchRunId}:
+    get:
+      summary: Get search run status and current merged results
+      parameters:
+        - name: searchRunId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Search run status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchRunResponse"
+  /v1/connectors:
+    get:
+      summary: List connector status for the current user
+      responses:
+        "200":
+          description: Connector status list
   /v1/sync/{source}:
     post:
       summary: Start a source sync
@@ -44,6 +82,34 @@ paths:
       responses:
         "200":
           description: Document detail
+  /v1/assistant/actions:
+    post:
+      summary: Run an assistant action over retrieved search results
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssistantActionRequest"
+      responses:
+        "202":
+          description: Assistant action accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistantActionResponse"
+  /v1/assistant/actions/{actionJobId}:
+    get:
+      summary: Get assistant action or artifact job status
+      parameters:
+        - name: actionJobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Assistant action status
 components:
   schemas:
     SearchRequest:
@@ -60,7 +126,7 @@ components:
           type: array
           items:
             type: string
-            enum: [slack, google_drive, conference_blob, email]
+            enum: [slack, google_drive, conference_bridge, email, knowledge_base, data_fabric]
         filters:
           type: object
           properties:
@@ -91,6 +157,53 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SearchResult"
+    SearchRunResponse:
+      type: object
+      required: [success, searchRun]
+      properties:
+        success:
+          type: boolean
+        searchRun:
+          $ref: "#/components/schemas/SearchRun"
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+    SearchRun:
+      type: object
+      required: [id, tenantId, userId, query, status, selectedSources]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        userId:
+          type: string
+        query:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, partial, completed, failed]
+        selectedSources:
+          type: array
+          items:
+            type: string
+        sourceStatuses:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceSearchAgentStatus"
+    SourceSearchAgentStatus:
+      type: object
+      properties:
+        source:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, completed, failed]
+        resultCount:
+          type: integer
+        error:
+          type: string
     SearchResult:
       type: object
       required: [id, source, title, oneLine, score]
@@ -98,6 +211,10 @@ components:
         id:
           type: string
         source:
+          type: string
+        sourceIcon:
+          type: string
+        sourceLabel:
           type: string
         title:
           type: string
@@ -114,9 +231,76 @@ components:
           type: number
         sourceUri:
           type: string
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttachmentRef"
+        links:
+          type: array
+          items:
+            type: string
         children:
           type: array
           items:
             type: object
         metadata:
           type: object
+    AttachmentRef:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        mimeType:
+          type: string
+        size:
+          type: integer
+        secureOpenUrl:
+          type: string
+        textIndexed:
+          type: boolean
+        metadata:
+          type: object
+    AssistantActionRequest:
+      type: object
+      required: [tenantId, userId, searchRunId, actionType, selectedResultIds]
+      properties:
+        tenantId:
+          type: string
+        userId:
+          type: string
+        searchRunId:
+          type: string
+        actionType:
+          type: string
+          enum: [summarize, answer_question, draft_email, create_powerpoint, create_pdf, extract_action_items, compare_sources]
+        selectedResultIds:
+          type: array
+          items:
+            type: string
+        prompt:
+          type: string
+        provider:
+          type: string
+          description: Optional provider override; backend validates allowed providers.
+    AssistantActionResponse:
+      type: object
+      required: [success, actionJob]
+      properties:
+        success:
+          type: boolean
+        actionJob:
+          type: object
+          properties:
+            id:
+              type: string
+            status:
+              type: string
+              enum: [queued, running, completed, failed]
+            responseText:
+              type: string
+            artifacts:
+              type: array
+              items:
+                type: object

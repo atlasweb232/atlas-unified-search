@@ -62,6 +62,125 @@
 - `metadata`
 - `createdAt`
 
+## ConnectorStatus
+
+- `tenantId`
+- `userId`
+- `source`
+- `configured`
+- `selectedByDefault`
+- `syncStatus`
+- `lastSyncedAt`
+- `lastError`
+- `availableFilters`
+
+## SearchRun
+
+- `id`
+- `tenantId`
+- `userId`
+- `query`
+- `selectedSources`
+- `filters`
+- `status`: `queued | running | partial | completed | failed`
+- `sourceStatuses`
+- `resultIds`
+- `createdAt`
+- `updatedAt`
+- `completedAt`
+
+## SourceSearchAgentRun
+
+- `id`
+- `searchRunId`
+- `tenantId`
+- `userId`
+- `source`
+- `status`: `queued | running | completed | failed`
+- `startedAt`
+- `completedAt`
+- `error`
+- `resultCount`
+- `latencyMs`
+
+## SearchResultLineItem
+
+- `id`
+- `searchRunId`
+- `documentId`
+- `source`
+- `sourceIcon`
+- `sourceLabel`
+- `title`
+- `oneLine`
+- `author`
+- `timestamp`
+- `container`
+- `score`
+- `matchedChunk`
+- `attachments`
+- `links`
+- `children`
+- `expandable`
+- `selected`
+- `metadata`
+
+## AttachmentRef
+
+- `id`
+- `documentId`
+- `source`
+- `name`
+- `mimeType`
+- `size`
+- `sourceUri`
+- `secureOpenUrl`
+- `textIndexed`
+- `metadata`
+
+## AssistantConversation
+
+- `id`
+- `tenantId`
+- `userId`
+- `searchRunId`
+- `provider`
+- `status`
+- `createdAt`
+- `updatedAt`
+
+## AssistantActionJob
+
+- `id`
+- `tenantId`
+- `userId`
+- `searchRunId`
+- `conversationId`
+- `actionType`: `summarize | answer_question | draft_email | create_powerpoint | create_pdf | extract_action_items | compare_sources`
+- `provider`
+- `selectedResultIds`
+- `prompt`
+- `status`: `queued | running | completed | failed`
+- `responseText`
+- `artifactIds`
+- `error`
+- `createdAt`
+- `completedAt`
+
+## Artifact
+
+- `id`
+- `tenantId`
+- `userId`
+- `actionJobId`
+- `type`: `pptx | pdf | markdown | text`
+- `title`
+- `storageUri`
+- `downloadUrl`
+- `provenanceResultIds`
+- `metadata`
+- `createdAt`
+
 ## Source Notes
 
 ### Slack Metadata
@@ -106,3 +225,9 @@
 - `recipients`
 - `receivedAt`
 - `attachments`
+
+## UI State Notes
+
+Connector selection is user/session state and should not change the underlying
+indexed corpus. Search runs must persist selected sources and filters so later
+assistant actions know exactly which corpus slice produced the answer.

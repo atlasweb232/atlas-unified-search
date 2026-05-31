@@ -69,3 +69,43 @@
 - [ ] Add Azure Container App deployment notes.
 - [ ] Add Postgres/pgvector migration.
 - [ ] Add scheduler/worker process.
+
+## M8: Federated Search Workspace UI
+
+- [ ] Add `UnifiedSearchWorkspace` React component.
+- [ ] Add left connector/source panel.
+- [ ] Add source icons for email, Slack, Google Drive, conference bridge,
+      knowledge base, and data fabric.
+- [ ] Add connector configured/syncing/error status display.
+- [ ] Add source include/exclude selection.
+- [ ] Add center search box.
+- [ ] Add source-agent status row for active query.
+- [ ] Add expandable result line items.
+- [ ] Add attachment/link rendering inside expanded rows.
+- [ ] Add result multi-select for assistant actions.
+- [ ] Add right assistant/chat panel.
+
+## M9: Parallel Source Search Agents
+
+- [ ] Add `SearchRun` model.
+- [ ] Add per-source `SourceSearchAgent` abstraction.
+- [ ] Fan out selected-source searches in parallel.
+- [ ] Return partial source statuses.
+- [ ] Merge/rank/dedupe line items.
+- [ ] Add polling or SSE endpoint for run status/results.
+- [ ] Add source-agent failure isolation.
+
+## M10: LLM And Artifact Actions
+
+- [ ] Add pluggable `ChatProvider` interface.
+- [ ] Add deterministic mock provider for tests.
+- [ ] Add OpenAI-compatible provider adapter.
+- [ ] Add Azure OpenAI provider placeholder.
+- [ ] Add Anthropic-compatible provider placeholder.
+- [ ] Add Cerebras-compatible provider placeholder.
+- [ ] Add assistant action API.
+- [ ] Add action types for summarize, Q&A, draft email, action items, compare
+      sources, create PowerPoint, and create PDF.
+- [ ] Add pluggable `ArtifactProvider` interface.
+- [ ] Add artifact provenance metadata.
+- [ ] Audit assistant and artifact actions.

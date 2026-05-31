@@ -2,21 +2,41 @@
 
 ## Architecture
 
-Use a decoupled backend with connector workers and a small embeddable frontend.
+Use a decoupled backend with connector workers and a three-panel embeddable
+frontend.
 
 ```text
-UnifiedSearchWidget
-  -> Search API
-      -> Hybrid Search Engine
+UnifiedSearchWorkspace
+  -> Left Connector Panel
+  -> Center Query + Result Stream
+  -> Right Assistant/Artifact Panel
+
+Search API
+  -> SearchRun Coordinator
+      -> Email SourceSearchAgent
+      -> Slack SourceSearchAgent
+      -> Google Drive SourceSearchAgent
+      -> Conference Bridge SourceSearchAgent
+      -> Knowledge Base SourceSearchAgent
+      -> Data Fabric SourceSearchAgent
+          -> Hybrid Search Engine
           -> Document Store
           -> Vector Store
           -> Access Filter
+      -> Merge/Rank/Dedupe Layer
+
+Assistant API
+  -> LLM Provider Adapter
+  -> Artifact Provider Adapter
+  -> Provenance/Audit Store
 
 Sync Scheduler
   -> Slack Connector
   -> Google Drive Connector
   -> Azure Blob Connector
   -> Email Connector
+  -> Knowledge Base Connector
+  -> Data Fabric Connector
       -> Normalizer
       -> Chunker
       -> Embedding Queue
@@ -33,7 +53,10 @@ Sync Scheduler
 - Blob source: `@azure/storage-blob`
 - Slack source: Slack Web API bot token
 - Drive source: Google Drive API v3
-- Frontend: Vite React component
+- Email source: Atlas email assistant connector
+- Frontend: Vite React workspace component
+- LLM provider: pluggable backend adapter, mock provider for tests
+- Artifact provider: pluggable backend adapter, local file generator for MVP
 
 ## Vector Store Recommendation
 
@@ -55,6 +78,59 @@ Combine:
 - recency boost
 - source-specific boosts
 
+## Federated Query Runtime
+
+Every user query creates a `SearchRun`. The run coordinator fans out work to one
+`SourceSearchAgent` per selected source. Each agent returns normalized line
+items as soon as its source search completes. The merge/rank layer appends
+partial results to the run, deduplicates related hits, and makes the current
+ranked list available through polling/SSE.
+
+MVP can use in-process async promises and polling. Production should move to a
+queue plus SSE or WebSocket streaming.
+
+## UI Layout
+
+Left panel:
+
+- connector list with icons
+- include/exclude checkboxes
+- connector sync/config status
+- source filters
+
+Center panel:
+
+- search box
+- query status by source
+- line-item results from Email, Slack, Google Drive, Conference Bridge,
+  Knowledge Base, and Data Fabric
+- expandable rows with thread/replies, source sections, transcript segments,
+  links, and attachments
+- result multi-select for assistant actions
+
+Right panel:
+
+- chatbot bound to retrieved results
+- action buttons for summarize, answer, draft, PowerPoint, PDF, action items,
+  and compare
+- artifact job status and downloads
+
+## LLM/Artifact Provider Boundary
+
+Provider adapters:
+
+- `ChatProvider.generate({ messages, contextDocuments, action })`
+- `ArtifactProvider.create({ type, title, sections, provenance })`
+
+The first implementation should include:
+
+- `mock` provider for deterministic tests
+- OpenAI-compatible provider contract
+- placeholders for Azure OpenAI, Anthropic-compatible, Cerebras-compatible
+  providers
+
+Provider credentials are backend-only.
+
 ## Milestones
 
 ### M1: Platform Skeleton
@@ -65,7 +141,7 @@ Combine:
 - in-memory store
 - hash embedding test provider
 - search API
-- React widget
+- React workspace/widget
 
 ### M2: Slack Personal Connector
 
@@ -105,6 +181,19 @@ Combine:
 - deletion/reindex jobs
 - Azure deployment
 
+### M7: Federated UI And Assistant
+
+- connector source panel
+- source selection filters
+- search run coordinator
+- source search agents
+- partial result stream/polling
+- expandable result rows with attachments
+- right-side assistant panel
+- pluggable LLM provider adapter
+- PowerPoint/PDF artifact job contract
+- provenance and audit for assistant actions
+
 ## Testing
 
 - connector fixture tests
@@ -114,3 +203,6 @@ Combine:
 - ACL/tenancy tests
 - widget rendering tests
 - full local E2E with fixture data
+- source-agent fanout tests
+- assistant action mock-provider tests
+- artifact provenance tests
