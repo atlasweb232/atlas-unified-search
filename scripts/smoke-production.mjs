@@ -3,6 +3,8 @@ const token = requireEnv('UNIFIED_SEARCH_AUTH_TOKEN');
 const tenantId = process.env.UNIFIED_SEARCH_SMOKE_TENANT_ID || 'smoke_tenant';
 const userId = process.env.UNIFIED_SEARCH_SMOKE_USER_ID || 'smoke_user';
 const mode = process.env.UNIFIED_SEARCH_SMOKE_MODE || 'inline';
+const jobPollAttempts = Number(process.env.UNIFIED_SEARCH_SMOKE_JOB_POLL_ATTEMPTS || 60);
+const jobPollIntervalMs = Number(process.env.UNIFIED_SEARCH_SMOKE_JOB_POLL_INTERVAL_MS || 5000);
 const marker = `unified search ${mode} smoke ${Date.now()}`;
 
 async function request(path, options = {}) {
@@ -177,11 +179,11 @@ if (readinessBySource.knowledge_base?.ready) {
 }
 
 async function waitForJob(jobId) {
-  for (let attempt = 1; attempt <= 24; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+  for (let attempt = 1; attempt <= jobPollAttempts; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, jobPollIntervalMs));
     const jobs = await request('/v1/jobs');
     const job = jobs.data.jobs?.find((item) => item.id === jobId);
-    console.log('job poll', { attempt, status: job?.status, indexed: job?.indexed, error: job?.error || '' });
+    console.log('job poll', { attempt, status: job?.status, indexed: job?.indexed, startedAt: job?.startedAt || '', error: job?.error || '' });
     if (job?.status === 'completed' || job?.status === 'failed') return job;
   }
   throw new Error(`job ${jobId} did not finish`);

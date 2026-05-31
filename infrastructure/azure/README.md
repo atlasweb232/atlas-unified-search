@@ -74,6 +74,7 @@ Repeatable production smoke tests:
 ```bash
 export UNIFIED_SEARCH_BASE_URL='https://atlas-unified-search.proudfield-a201b3fd.eastus.azurecontainerapps.io'
 export UNIFIED_SEARCH_AUTH_TOKEN='<same token wired into Container App>'
+export UNIFIED_SEARCH_SMOKE_JOB_POLL_ATTEMPTS=60
 
 UNIFIED_SEARCH_SMOKE_MODE=inline npm run smoke:production
 UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production
