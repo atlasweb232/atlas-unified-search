@@ -10,6 +10,7 @@
     "start": "node src/server.js",
     "start:worker": "node src/worker.js",
     "start:scheduler": "node src/scheduler.js",
+    "start:api-scheduler": "node src/apiScheduler.js",
     "build": "vite build frontend",
     "db:migrate": "node scripts/migrate-postgres.mjs",
     "audit:production-config": "node scripts/audit-production-config.mjs",

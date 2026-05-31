@@ -41,8 +41,16 @@ const report = {
       },
       ...(scheduler ? [
         envGate(schedulerEnv, 'UNIFIED_SEARCH_SYNC_SCHEDULES', 'secretRef', 'scheduler'),
-        envGate(schedulerEnv, 'POSTGRES_CONNECTION_STRING', 'secretRef', 'scheduler'),
-        envGate(schedulerEnv, 'SERVICE_BUS_CONNECTION_STRING', 'secretRef', 'scheduler'),
+        alternativeGate('scheduler_backend', [
+          groupGate('api_scheduler', [
+            envGate(schedulerEnv, 'UNIFIED_SEARCH_API_BASE_URL', 'value', 'scheduler'),
+            envGate(schedulerEnv, 'UNIFIED_SEARCH_AUTH_TOKEN', 'secretRef', 'scheduler'),
+          ]),
+          groupGate('direct_store_scheduler', [
+            envGate(schedulerEnv, 'POSTGRES_CONNECTION_STRING', 'secretRef', 'scheduler'),
+            envGate(schedulerEnv, 'SERVICE_BUS_CONNECTION_STRING', 'secretRef', 'scheduler'),
+          ]),
+        ]),
       ] : []),
     ],
     liveConnectors: [

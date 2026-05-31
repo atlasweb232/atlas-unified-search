@@ -7,7 +7,7 @@ The unified search service is production-testable when these gates are true:
 - Postgres flexible server has `pgvector` installed and `npm run db:migrate` has completed.
 - `/v1/health` reports `index.backend=postgres-pgvector`.
 - Service Bus queue `unified-search-sync` exists and the worker Container App is running.
-- Scheduled sync is configured either through a single-replica scheduler Container App/job using `UNIFIED_SEARCH_SYNC_SCHEDULES`, or consciously disabled for manual-only testing with `UNIFIED_SEARCH_SCHEDULER_REQUIRED` unset/false.
+- Scheduled sync is configured either through a single-replica scheduler Container App/job using `UNIFIED_SEARCH_SYNC_SCHEDULES`, or consciously disabled for manual-only testing with `UNIFIED_SEARCH_SCHEDULER_REQUIRED` unset/false. Prefer the API-backed scheduler (`node src/apiScheduler.js`) so scheduling only needs the protected API URL plus auth token; use the direct scheduler (`node src/scheduler.js`) only when intentionally giving the scheduler Postgres and Service Bus secrets.
 - `/v1/health` reports `queue.backend=azure-service-bus`.
 - Artifact Blob container exists and assistant artifacts are stored there.
 - `/v1/health` reports `artifacts.backend=azure-blob-artifact`.

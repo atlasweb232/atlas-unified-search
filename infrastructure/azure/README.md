@@ -88,16 +88,30 @@ export UNIFIED_SEARCH_SYNC_SCHEDULES='[
 node src/scheduler.js
 ```
 
-For Azure, run the scheduler as a separate single-replica Container App or
-scheduled job from the same image with command `node src/scheduler.js`. Keep
-`minReplicas=1` and `maxReplicas=1` for a continuously running scheduler so
-duplicate schedulers do not enqueue the same sync. The worker can still scale
-out because actual indexing work is queue-backed.
+For Azure, prefer the API-backed scheduler unless the scheduler must connect to
+Postgres/Service Bus directly. It runs as a separate single-replica Container
+App from the same image with command `node src/apiScheduler.js`, checks
+connector readiness, then calls the protected API to enqueue `/v1/sync/{source}`
+or `/v1/reindex/{source}` work. Keep `minReplicas=1` and `maxReplicas=1` for a
+continuously running scheduler so duplicate schedulers do not enqueue the same
+sync. The worker can still scale out because actual indexing work is
+queue-backed.
 
 Set `UNIFIED_SEARCH_SCHEDULER_REQUIRED=true` only when scheduled sync is a
 production gate. Leave it unset for manual-only connector testing.
 
 Deploy the scheduler Container App when schedules are ready:
+
+```bash
+export UNIFIED_SEARCH_API_BASE_URL='https://atlas-unified-search.proudfield-a201b3fd.eastus.azurecontainerapps.io'
+export UNIFIED_SEARCH_AUTH_TOKEN='<same token wired into Container App>'
+export UNIFIED_SEARCH_SYNC_SCHEDULES='<json schedule array>'
+chmod +x infrastructure/azure/deploy-api-scheduler-containerapp.sh
+./infrastructure/azure/deploy-api-scheduler-containerapp.sh
+```
+
+Use `deploy-scheduler-containerapp.sh` only for the direct-store scheduler path
+where the scheduler app is intentionally given Postgres and Service Bus secrets.
 
 ```bash
 chmod +x infrastructure/azure/deploy-scheduler-containerapp.sh
