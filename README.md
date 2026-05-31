@@ -15,6 +15,15 @@ Primary feature:
 
 - `specs/001-unified-knowledge-search/spec.md`
 
+Current production smoke status:
+
+- Live-proven: hosted UI, API auth, Service Bus worker, Postgres/pgvector,
+  Blob artifacts, email readiness, conference Blob transcripts, and knowledge
+  base documents.
+- Fixture-pipeline only: Slack-shaped data through queue/index/search/assistant.
+- Not live-proven until credentials are configured: Slack Web API and Google
+  Drive API.
+
 Implementation target name:
 
 - `atlas-unified-search`

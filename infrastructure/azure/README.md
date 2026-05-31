@@ -81,6 +81,13 @@ UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production
 npm run smoke:production:ui
 ```
 
+Important: the Slack section of `smoke:production` is intentionally named a
+fixture pipeline check unless Slack readiness is `ready:true`. It verifies the
+shared Service Bus/Postgres/search/assistant path with Slack-shaped data; it
+does not verify real Slack Web API access without `SLACK_BOT_TOKEN` and
+`SLACK_CHANNEL_IDS`. Google Drive is only live-tested after readiness is
+`ready:true` and a real `/v1/reindex/google_drive` run succeeds.
+
 If `conference_bridge` readiness is `ready:true`, `smoke:production` also runs
 a live Blob transcript reindex/search using
 `UNIFIED_SEARCH_SMOKE_CONFERENCE_PREFIX`, defaulting to `smoke/`.

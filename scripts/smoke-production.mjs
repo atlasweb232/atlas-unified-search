@@ -46,6 +46,14 @@ console.log('connector readiness', readiness.data.checks.map((check) => ({
   status: check.status,
 })));
 const readinessBySource = Object.fromEntries((readiness.data.checks || []).map((check) => [check.source, check]));
+console.log('live connector coverage', {
+  email: readinessBySource.email?.ready ? 'live_ready' : readinessBySource.email?.status || 'not_reported',
+  conference_bridge: readinessBySource.conference_bridge?.ready ? 'live_ready' : readinessBySource.conference_bridge?.status || 'not_reported',
+  knowledge_base: readinessBySource.knowledge_base?.ready ? 'live_ready' : readinessBySource.knowledge_base?.status || 'not_reported',
+  slack: readinessBySource.slack?.ready ? 'live_ready' : 'not_live_tested',
+  google_drive: readinessBySource.google_drive?.ready ? 'live_ready' : 'not_live_tested',
+  data_fabric: readinessBySource.data_fabric?.ready ? 'live_ready' : readinessBySource.data_fabric?.status || 'not_reported',
+});
 
 const wait = mode !== 'async';
 const sync = await request('/v1/sync/slack', {
@@ -69,15 +77,15 @@ const sync = await request('/v1/sync/slack', {
 });
 assert(sync.ok, `sync failed: ${JSON.stringify(sync.data)}`);
 const jobId = sync.data.job.id;
-console.log('sync accepted', { status: sync.status, jobId, jobStatus: sync.data.job.status });
+console.log('slack fixture pipeline sync accepted', { status: sync.status, jobId, jobStatus: sync.data.job.status });
 
 if (mode === 'async') {
   const job = await waitForJob(jobId);
   assert(job.status === 'completed', `async job did not complete: ${JSON.stringify(job)}`);
-  console.log('async worker ok', { jobId, indexed: job.indexed });
+  console.log('slack fixture pipeline async worker ok', { jobId, indexed: job.indexed });
 } else {
   assert(sync.data.job.status === 'completed', `inline job did not complete: ${JSON.stringify(sync.data.job)}`);
-  console.log('inline sync ok', { jobId, indexed: sync.data.indexed });
+  console.log('slack fixture pipeline inline sync ok', { jobId, indexed: sync.data.indexed });
 }
 
 const run = await request('/v1/search-runs', {
@@ -85,7 +93,7 @@ const run = await request('/v1/search-runs', {
   body: JSON.stringify({ tenantId, userId, query: marker, sources: ['slack'], wait: true, limit: 5 }),
 });
 assert(run.ok && run.data.results?.length, `search run failed: ${JSON.stringify(run.data)}`);
-console.log('search run ok', { runId: run.data.searchRun.id, count: run.data.results.length });
+console.log('slack fixture pipeline search run ok', { runId: run.data.searchRun.id, count: run.data.results.length });
 
 const action = await request('/v1/assistant/actions', {
   method: 'POST',
@@ -100,7 +108,19 @@ const action = await request('/v1/assistant/actions', {
 });
 assert(action.ok && action.data.actionJob?.status === 'completed', `assistant action failed: ${JSON.stringify(action.data)}`);
 assert(action.data.actionJob.artifactIds?.length, 'assistant action did not create an artifact');
-console.log('assistant artifact ok', { actionId: action.data.actionJob.id, artifactIds: action.data.actionJob.artifactIds });
+console.log('assistant artifact from fixture pipeline ok', { actionId: action.data.actionJob.id, artifactIds: action.data.actionJob.artifactIds });
+
+if (readinessBySource.slack?.ready) {
+  console.log('slack live connector ready; run /v1/reindex/slack with production channel options to test real Slack ingestion');
+} else {
+  console.log('slack live connector skipped', { reason: 'missing Slack bot token/channel IDs or readiness failed', status: readinessBySource.slack?.status || 'not_reported' });
+}
+
+if (readinessBySource.google_drive?.ready) {
+  console.log('google drive live connector ready; run /v1/reindex/google_drive with production folder options to test real Drive ingestion');
+} else {
+  console.log('google drive live connector skipped', { reason: 'missing Google OAuth/service-account config or readiness failed', status: readinessBySource.google_drive?.status || 'not_reported' });
+}
 
 if (readinessBySource.conference_bridge?.ready) {
   const conferenceTenantId = `${tenantId}_conference`;
