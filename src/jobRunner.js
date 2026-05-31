@@ -7,12 +7,14 @@ export class JobRunner {
     this.searchEngine = searchEngine;
   }
 
-  async enqueue({ source, tenantId, userId, options = {} }) {
+  async enqueue({ source, tenantId, userId, options = {}, autoStart = true }) {
     const job = this.store.createJob({ source, tenantId, userId });
     await this.store.save();
-    setTimeout(() => {
-      this.run(job.id, { source, tenantId, userId, options }).catch(() => {});
-    }, 0);
+    if (autoStart) {
+      setTimeout(() => {
+        this.run(job.id, { source, tenantId, userId, options }).catch(() => {});
+      }, 0);
+    }
     return job;
   }
 

@@ -39,7 +39,7 @@ export async function createApp(config) {
       return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
     }
     try {
-      const job = await jobs.enqueue({ source: req.params.source, tenantId, userId, options });
+      const job = await jobs.enqueue({ source: req.params.source, tenantId, userId, options, autoStart: !wait });
       if (wait) {
         const result = await jobs.run(job.id, { source: req.params.source, tenantId, userId, options });
         return res.json({ success: true, job: store.state.jobs[job.id], indexed: result.indexed });
