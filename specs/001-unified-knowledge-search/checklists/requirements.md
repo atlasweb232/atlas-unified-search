@@ -10,6 +10,6 @@
 - [x] Embeddable React widget requirement defined.
 - [x] Tenant/user segregation documented.
 - [x] Production vector store recommendation captured.
-- [ ] Implementation skeleton created.
-- [ ] Source fixture tests added.
+- [x] Implementation skeleton created.
+- [x] Source fixture tests added.
 - [ ] Deployment target finalized.

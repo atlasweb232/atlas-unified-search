@@ -4,7 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node scripts/check-specs.mjs",
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node scripts/check-specs.mjs && node --test tests/*.test.js",
     "lint": "node scripts/check-specs.mjs"
+  },
+  "dependencies": {
+    "@azure/storage-blob": "^12.27.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "googleapis": "^140.0.1"
   }
 }
