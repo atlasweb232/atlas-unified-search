@@ -1,5 +1,7 @@
 import cors from 'cors';
 import express from 'express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AssistantActionService } from './assistant/actions.js';
 import { LocalArtifactProvider } from './assistant/artifacts.js';
 import { createChatProvider } from './assistant/providers.js';
@@ -91,12 +93,14 @@ export async function createApp(config) {
   app.get('/v1/search-runs/:searchRunId', (req, res) => {
     const searchRun = store.getSearchRun(req.params.searchRunId);
     if (!searchRun) return res.status(404).json({ success: false, error: 'Search run not found' });
+    if (!matchesScope(req, searchRun)) return res.status(403).json({ success: false, error: 'Forbidden' });
     return res.json({ success: true, searchRun, results: searchRun.results || [] });
   });
 
   app.get('/v1/documents/:documentId', (req, res) => {
     const document = store.getDocument(req.params.documentId);
     if (!document) return res.status(404).json({ success: false, error: 'Document not found' });
+    if (!matchesScope(req, document)) return res.status(403).json({ success: false, error: 'Forbidden' });
     return res.json({ success: true, document });
   });
 
@@ -120,10 +124,26 @@ export async function createApp(config) {
   app.get('/v1/assistant/actions/:actionJobId', (req, res) => {
     const actionJob = store.getAssistantAction(req.params.actionJobId);
     if (!actionJob) return res.status(404).json({ success: false, error: 'Assistant action not found' });
+    if (!matchesScope(req, actionJob)) return res.status(403).json({ success: false, error: 'Forbidden' });
     return res.json({ success: true, actionJob });
   });
 
+  const frontendDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../frontend/dist');
+  app.use(express.static(frontendDist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/v1/')) return next();
+    res.sendFile(path.join(frontendDist, 'index.html'), (error) => {
+      if (error) next();
+    });
+  });
+
   return app;
+}
+
+function matchesScope(req, row) {
+  const tenantId = req.query.tenantId || req.headers['x-tenant-id'];
+  const userId = req.query.userId || req.headers['x-user-id'];
+  return Boolean(tenantId && userId && row.tenantId === tenantId && row.userId === userId);
 }
 
 function hashQuery(query) {
