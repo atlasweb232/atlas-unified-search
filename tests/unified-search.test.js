@@ -48,6 +48,15 @@ test('api auth boundary blocks protected endpoints when enabled', async () => {
       headers: { Authorization: 'Bearer test-token' },
     });
     assert.equal(authorized.status, 200);
+
+    const readiness = await fetch(`${base}/v1/production-readiness`, {
+      headers: { Authorization: 'Bearer test-token' },
+    });
+    assert.equal(readiness.status, 503);
+    const readinessBody = await readiness.json();
+    assert.equal(readinessBody.success, true);
+    assert.equal(readinessBody.report.readyForProductionTesting, false);
+    assert.ok(readinessBody.report.credentialBlockedSources.some((item) => item.source === 'slack'));
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });

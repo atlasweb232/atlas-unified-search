@@ -27,6 +27,7 @@ The unified search service is production-testable when these gates are true:
 - Google Drive live ingestion is not proven until `/v1/connectors/readiness?source=google_drive` returns `ready:true` and `/v1/reindex/google_drive` succeeds with real credentials.
 - `npm run smoke:production:ui` passes against the hosted frontend and protected API boundary.
 - `GET /v1/connectors/readiness` returns explicit `ready/status/requirements` for each connector without exposing secret values.
+- `GET /v1/production-readiness` returns `readyForProductionTesting:true`, lists Slack/GDrive under `credentialBlockedSources` until real credentials are configured, and only sets `productionComplete:true` after every live source is proven.
 
 Known non-blocking follow-up after the first production test:
 

@@ -67,6 +67,7 @@ curl -s "$BASE/v1/health" | jq
 curl -i "$BASE/v1/connectors"
 curl -s "$BASE/v1/connectors" -H "Authorization: Bearer $UNIFIED_SEARCH_AUTH_TOKEN" | jq
 curl -s "$BASE/v1/connectors/readiness" -H "Authorization: Bearer $UNIFIED_SEARCH_AUTH_TOKEN" | jq
+curl -s "$BASE/v1/production-readiness" -H "Authorization: Bearer $UNIFIED_SEARCH_AUTH_TOKEN" | jq
 ```
 
 Repeatable production smoke tests:

@@ -38,6 +38,16 @@ if (token) {
     ready: check.ready,
     status: check.status,
   })));
+  const production = await request('/v1/production-readiness', { token });
+  assert(production.ok, `production readiness failed: ${production.status} ${JSON.stringify(production.data)}`);
+  assert(production.data.report?.readyForProductionTesting === true, 'production readiness report is not ready for production testing');
+  assert(production.data.report?.credentialBlockedSources?.some((item) => item.source === 'slack'), 'production readiness should report Slack as credential-blocked');
+  assert(production.data.report?.credentialBlockedSources?.some((item) => item.source === 'google_drive'), 'production readiness should report Google Drive as credential-blocked');
+  console.log('production readiness report ok', {
+    readyForProductionTesting: production.data.report.readyForProductionTesting,
+    productionComplete: production.data.report.productionComplete,
+    credentialBlocked: production.data.report.credentialBlockedSources.map((item) => item.source),
+  });
 } else {
   console.log('authenticated readiness skipped: UNIFIED_SEARCH_AUTH_TOKEN not set');
 }

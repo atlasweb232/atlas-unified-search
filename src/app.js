@@ -64,6 +64,23 @@ export async function createApp(config) {
     }
   });
 
+  app.get('/v1/production-readiness', async (req, res) => {
+    try {
+      await refreshStore(store);
+      const connectorChecks = await registry.readiness();
+      const report = productionReadinessReport({
+        config,
+        store,
+        queue,
+        assistant,
+        connectorChecks,
+      });
+      res.status(report.readyForProductionTesting ? 200 : 503).json({ success: true, report });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   app.post('/v1/sync/:source', async (req, res) => {
     const { tenantId, userId, options = {}, wait = false } = req.body || {};
     if (!tenantId || !userId) {
@@ -284,4 +301,62 @@ function allowedSourcesFor(config, tenantId, userId) {
 
 function hasSourcePermissions(config) {
   return Boolean(config.sourcePermissions && Object.keys(config.sourcePermissions).length);
+}
+
+function productionReadinessReport({ config, store, queue, assistant, connectorChecks }) {
+  const checksBySource = Object.fromEntries(connectorChecks.map((check) => [check.source, check]));
+  const infrastructure = {
+    apiAuth: { ready: Boolean(config.auth?.required), detail: config.auth?.required ? 'required' : 'not_required' },
+    index: { ready: store.status().backend === 'postgres-pgvector', detail: store.status().backend },
+    queue: { ready: queue.name === 'azure-service-bus', detail: queue.name },
+    artifacts: { ready: assistant.artifactProvider.name === 'azure-blob-artifact' && assistant.artifactProvider.configured(), detail: assistant.artifactProvider.name },
+  };
+  const liveSources = ['email', 'conference_bridge', 'knowledge_base']
+    .map((source) => ({ source, ready: Boolean(checksBySource[source]?.ready), status: checksBySource[source]?.status || 'not_reported' }));
+  const credentialBlockedSources = ['slack', 'google_drive']
+    .filter((source) => !checksBySource[source]?.ready)
+    .map((source) => ({
+      source,
+      status: checksBySource[source]?.status || 'not_reported',
+      missing: (checksBySource[source]?.requirements || [])
+        .filter((requirement) => !requirement.configured && !requirement.optional)
+        .map((requirement) => requirement.name),
+    }));
+  const liveButExternal = ['slack', 'google_drive']
+    .filter((source) => checksBySource[source]?.ready)
+    .map((source) => ({ source, status: checksBySource[source].status }));
+  const futureSources = ['data_fabric']
+    .map((source) => ({ source, ready: Boolean(checksBySource[source]?.ready), status: checksBySource[source]?.status || 'not_reported' }));
+  const fixtureOnly = [
+    {
+      source: 'slack',
+      status: 'fixture_pipeline_only_until_live_readiness',
+      proves: ['normalization shape', 'Service Bus worker path', 'Postgres/pgvector indexing', 'search', 'assistant artifacts'],
+      doesNotProve: ['Slack token validity', 'Slack channel access', 'Slack history/thread/file API calls'],
+    },
+    {
+      source: 'google_drive',
+      status: 'fixture_tests_only_until_live_readiness',
+      proves: ['document shape', 'index/search behavior'],
+      doesNotProve: ['Google OAuth/service account validity', 'Drive file listing/export/download'],
+    },
+  ];
+  const infrastructureReady = Object.values(infrastructure).every((item) => item.ready);
+  const requiredLiveSourcesReady = liveSources.every((item) => item.ready);
+  return {
+    generatedAt: new Date().toISOString(),
+    readyForProductionTesting: infrastructureReady && requiredLiveSourcesReady,
+    productionComplete: infrastructureReady && requiredLiveSourcesReady && credentialBlockedSources.length === 0 && futureSources.every((item) => item.ready),
+    infrastructure,
+    liveSources,
+    liveButExternal,
+    credentialBlockedSources,
+    futureSources,
+    fixtureOnly,
+    nextActions: [
+      ...(credentialBlockedSources.some((item) => item.source === 'slack') ? ['Configure SLACK_BOT_TOKEN and SLACK_CHANNEL_IDS, then run /v1/reindex/slack with a real channel.'] : []),
+      ...(credentialBlockedSources.some((item) => item.source === 'google_drive') ? ['Configure Google OAuth refresh token or service account, then run /v1/reindex/google_drive with a real folder.'] : []),
+      ...(futureSources.some((item) => item.source === 'data_fabric' && !item.ready) ? ['Define and configure the Data Fabric API contract before claiming live Data Fabric readiness.'] : []),
+    ],
+  };
 }
