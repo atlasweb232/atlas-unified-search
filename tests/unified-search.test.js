@@ -73,6 +73,41 @@ test('unified search indexes fixture documents across all connector types', asyn
     assert.equal(health.index.bySource.slack, 1);
     assert.equal(health.index.bySource.google_drive, 1);
     assert.equal(health.index.bySource.email, 1);
+
+    const run = await post(base, '/v1/search-runs', {
+      tenantId,
+      userId,
+      query: 'calendar endpoint cleanup',
+      sources: ['conference_bridge', 'knowledge_base', 'email'],
+      wait: true,
+      limit: 10,
+    });
+    assert.equal(run.searchRun.status, 'completed');
+    assert.ok(run.searchRun.sourceStatuses.every((status) => status.status === 'completed'));
+    assert.ok(run.results.some((result) => result.source === 'conference_bridge'));
+    assert.ok(run.results.every((result) => result.sourceIcon && result.sourceLabel));
+
+    const selectedResultIds = run.results.slice(0, 2).map((result) => result.id);
+    const summary = await post(base, '/v1/assistant/actions', {
+      tenantId,
+      userId,
+      searchRunId: run.searchRun.id,
+      actionType: 'summarize',
+      selectedResultIds,
+      prompt: 'Summarize the operational issue.',
+    });
+    assert.equal(summary.actionJob.status, 'completed');
+    assert.match(summary.actionJob.responseText, /Summary generated/);
+
+    const ppt = await post(base, '/v1/assistant/actions', {
+      tenantId,
+      userId,
+      searchRunId: run.searchRun.id,
+      actionType: 'create_powerpoint',
+      selectedResultIds,
+    });
+    assert.equal(ppt.actionJob.status, 'completed');
+    assert.equal(ppt.actionJob.artifactIds.length, 1);
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     await new Promise((resolve) => setTimeout(resolve, 25));

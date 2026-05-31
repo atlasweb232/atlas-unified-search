@@ -69,6 +69,28 @@ export function oneLine(text, limit = 180) {
   return `${value.slice(0, limit - 1).trim()}…`;
 }
 
+export function sourceIcon(source) {
+  return {
+    slack: 'message-square',
+    google_drive: 'folder',
+    conference_bridge: 'phone-call',
+    email: 'mail',
+    knowledge_base: 'book-open',
+    data_fabric: 'database',
+  }[source] || 'search';
+}
+
+export function sourceLabel(source) {
+  return {
+    slack: 'Slack',
+    google_drive: 'Google Drive',
+    conference_bridge: 'Conference Bridge',
+    email: 'Email',
+    knowledge_base: 'Knowledge Base',
+    data_fabric: 'Data Fabric',
+  }[source] || source;
+}
+
 function chunk(document, index, text, metadata) {
   return {
     id: `${document.id}:chunk:${index}`,

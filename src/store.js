@@ -8,6 +8,9 @@ const EMPTY_STATE = {
   chunks: {},
   checkpoints: {},
   jobs: {},
+  searchRuns: {},
+  assistantActions: {},
+  artifacts: {},
   audit: [],
 };
 
@@ -83,8 +86,81 @@ export class JsonSearchStore {
   }
 
   audit(event) {
-    this.state.audit.unshift({ id: `evt_${Date.now()}_${Math.random().toString(16).slice(2)}`, createdAt: new Date().toISOString(), ...event });
+    this.state.audit.unshift({ id: `evt_${Date.now()}_${Math.random().toString(16).slice(2)}`, createdAt: new Date().toISOString(), ...redactObject(event) });
     this.state.audit = this.state.audit.slice(0, 1000);
+  }
+
+  createSearchRun({ tenantId, userId, query, selectedSources, filters }) {
+    const id = `run_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const run = {
+      id,
+      tenantId,
+      userId,
+      query,
+      selectedSources,
+      filters: filters || {},
+      status: 'queued',
+      sourceStatuses: selectedSources.map((source) => ({ source, status: 'queued', resultCount: 0, error: '' })),
+      results: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      completedAt: null,
+    };
+    this.state.searchRuns[id] = run;
+    return run;
+  }
+
+  updateSearchRun(id, patch) {
+    const run = this.state.searchRuns[id];
+    if (!run) return null;
+    this.state.searchRuns[id] = { ...run, ...patch, updatedAt: new Date().toISOString() };
+    return this.state.searchRuns[id];
+  }
+
+  updateSourceStatus(searchRunId, source, patch) {
+    const run = this.state.searchRuns[searchRunId];
+    if (!run) return null;
+    run.sourceStatuses = run.sourceStatuses.map((status) => (
+      status.source === source ? { ...status, ...patch } : status
+    ));
+    run.updatedAt = new Date().toISOString();
+    return run;
+  }
+
+  getSearchRun(id) {
+    return this.state.searchRuns[id] || null;
+  }
+
+  createAssistantAction(action) {
+    const id = `act_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const row = {
+      id,
+      status: 'queued',
+      responseText: '',
+      artifactIds: [],
+      error: '',
+      createdAt: new Date().toISOString(),
+      completedAt: null,
+      ...redactObject(action),
+    };
+    this.state.assistantActions[id] = row;
+    return row;
+  }
+
+  updateAssistantAction(id, patch) {
+    this.state.assistantActions[id] = { ...(this.state.assistantActions[id] || { id }), ...redactObject(patch) };
+    return this.state.assistantActions[id];
+  }
+
+  getAssistantAction(id) {
+    return this.state.assistantActions[id] || null;
+  }
+
+  createArtifact(artifact) {
+    const id = `art_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const row = { id, createdAt: new Date().toISOString(), ...redactObject(artifact) };
+    this.state.artifacts[id] = row;
+    return row;
   }
 
   status() {
@@ -100,6 +176,24 @@ export class JsonSearchStore {
       }, {}),
     };
   }
+}
+
+export function redactObject(value) {
+  if (Array.isArray(value)) return value.map(redactObject);
+  if (!value || typeof value !== 'object') {
+    return typeof value === 'string' ? redactSecret(value) : value;
+  }
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => {
+    if (/token|secret|password|api[_-]?key|authorization/i.test(key)) return [key, '[REDACTED]'];
+    return [key, redactObject(entry)];
+  }));
+}
+
+function redactSecret(value) {
+  return value
+    .replace(/xox[baprs]-[A-Za-z0-9-]+/g, '[REDACTED_SLACK_TOKEN]')
+    .replace(/sk-[A-Za-z0-9_-]{16,}/g, '[REDACTED_API_KEY]')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, 'Bearer [REDACTED]');
 }
 
 export class SearchEngine {

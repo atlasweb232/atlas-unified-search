@@ -1,0 +1,83 @@
+import { sourceIcon, sourceLabel } from './model.js';
+
+export class SearchRunCoordinator {
+  constructor({ store, searchEngine }) {
+    this.store = store;
+    this.searchEngine = searchEngine;
+  }
+
+  async start({ tenantId, userId, query, sources, filters = {}, limit = 10, wait = false }) {
+    const selectedSources = sources?.length ? sources : defaultSources(this.store, tenantId, userId);
+    const run = this.store.createSearchRun({ tenantId, userId, query, selectedSources, filters });
+    this.store.audit({ eventType: 'search_run_start', tenantId, userId, queryHash: hashQuery(query), metadata: { runId: run.id, selectedSources } });
+    await this.store.save();
+    const promise = this.execute(run.id, { tenantId, userId, query, selectedSources, filters, limit });
+    if (wait) await promise;
+    return this.store.getSearchRun(run.id);
+  }
+
+  async execute(runId, { tenantId, userId, query, selectedSources, filters, limit }) {
+    this.store.updateSearchRun(runId, { status: 'running' });
+    const settled = await Promise.allSettled(selectedSources.map(async (source) => {
+      this.store.updateSourceStatus(runId, source, { status: 'running', startedAt: new Date().toISOString() });
+      const results = await this.searchEngine.search({ tenantId, userId, query, sources: [source], filters, limit });
+      const lineItems = results.map((result) => normalizeLineItem(runId, result));
+      this.store.updateSourceStatus(runId, source, { status: 'completed', completedAt: new Date().toISOString(), resultCount: lineItems.length });
+      return lineItems;
+    }));
+    const results = [];
+    for (const [index, result] of settled.entries()) {
+      const source = selectedSources[index];
+      if (result.status === 'fulfilled') {
+        results.push(...result.value);
+      } else {
+        this.store.updateSourceStatus(runId, source, { status: 'failed', completedAt: new Date().toISOString(), error: result.reason?.message || 'Search failed' });
+      }
+    }
+    const deduped = dedupe(results).sort((left, right) => right.score - left.score).slice(0, limit);
+    const failed = this.store.getSearchRun(runId).sourceStatuses.some((status) => status.status === 'failed');
+    this.store.updateSearchRun(runId, { status: failed ? 'partial' : 'completed', results: deduped, completedAt: new Date().toISOString() });
+    this.store.audit({ eventType: 'search_run_complete', tenantId, userId, metadata: { runId, resultCount: deduped.length, failed } });
+    await this.store.save();
+    return this.store.getSearchRun(runId);
+  }
+}
+
+function normalizeLineItem(searchRunId, result) {
+  const attachments = result.metadata?.attachments || result.metadata?.files || [];
+  const links = result.metadata?.links || [];
+  return {
+    ...result,
+    id: `${searchRunId}:${result.id}`,
+    searchRunId,
+    documentId: result.id,
+    sourceIcon: sourceIcon(result.source),
+    sourceLabel: sourceLabel(result.source),
+    attachments,
+    links,
+    expandable: Boolean((result.children || []).length || attachments.length || links.length),
+    selected: false,
+  };
+}
+
+function dedupe(results) {
+  const byDocument = new Map();
+  for (const result of results) {
+    const existing = byDocument.get(result.documentId);
+    if (!existing || result.score > existing.score) byDocument.set(result.documentId, result);
+  }
+  return [...byDocument.values()];
+}
+
+function defaultSources(store, tenantId, userId) {
+  const sources = [...new Set(store.listDocuments()
+    .filter((document) => document.tenantId === tenantId && document.userId === userId)
+    .map((document) => document.source))];
+  return sources.length ? sources : ['email', 'slack', 'google_drive', 'conference_bridge', 'knowledge_base', 'data_fabric'];
+}
+
+function hashQuery(query) {
+  let hash = 0;
+  for (const char of String(query || '')) hash = Math.imul(31, hash) + char.charCodeAt(0) | 0;
+  return `q_${Math.abs(hash)}`;
+}

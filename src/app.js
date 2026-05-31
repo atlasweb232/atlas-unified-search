@@ -1,8 +1,12 @@
 import cors from 'cors';
 import express from 'express';
+import { AssistantActionService } from './assistant/actions.js';
+import { LocalArtifactProvider } from './assistant/artifacts.js';
+import { createChatProvider } from './assistant/providers.js';
 import { createConnectorRegistry } from './connectors/index.js';
 import { createEmbedder } from './embedding.js';
 import { JobRunner } from './jobRunner.js';
+import { SearchRunCoordinator } from './searchRun.js';
 import { JsonSearchStore, SearchEngine } from './store.js';
 
 export async function createApp(config) {
@@ -16,8 +20,14 @@ export async function createApp(config) {
   const searchEngine = new SearchEngine({ store, embedder });
   const registry = createConnectorRegistry(config);
   const jobs = new JobRunner({ registry, store, searchEngine });
+  const searchRuns = new SearchRunCoordinator({ store, searchEngine });
+  const assistant = new AssistantActionService({
+    store,
+    chatProvider: createChatProvider(config),
+    artifactProvider: new LocalArtifactProvider({ dataDir: config.dataDir }),
+  });
 
-  app.locals.services = { store, searchEngine, registry, jobs };
+  app.locals.services = { store, searchEngine, registry, jobs, searchRuns, assistant };
 
   app.get('/v1/health', (req, res) => {
     res.json({
@@ -65,6 +75,25 @@ export async function createApp(config) {
     }
   });
 
+  app.post('/v1/search-runs', async (req, res) => {
+    const { tenantId, userId, query, sources, filters, limit, wait = false } = req.body || {};
+    if (!tenantId || !userId || !query) {
+      return res.status(400).json({ success: false, error: 'tenantId, userId, and query are required' });
+    }
+    try {
+      const searchRun = await searchRuns.start({ tenantId, userId, query, sources, filters, limit, wait });
+      return res.status(wait ? 200 : 202).json({ success: true, searchRun, results: searchRun.results || [] });
+    } catch (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.get('/v1/search-runs/:searchRunId', (req, res) => {
+    const searchRun = store.getSearchRun(req.params.searchRunId);
+    if (!searchRun) return res.status(404).json({ success: false, error: 'Search run not found' });
+    return res.json({ success: true, searchRun, results: searchRun.results || [] });
+  });
+
   app.get('/v1/documents/:documentId', (req, res) => {
     const document = store.getDocument(req.params.documentId);
     if (!document) return res.status(404).json({ success: false, error: 'Document not found' });
@@ -73,6 +102,25 @@ export async function createApp(config) {
 
   app.get('/v1/jobs', (req, res) => {
     res.json({ success: true, jobs: jobs.listJobs() });
+  });
+
+  app.post('/v1/assistant/actions', async (req, res) => {
+    const { tenantId, userId, searchRunId, actionType, selectedResultIds, prompt, provider } = req.body || {};
+    if (!tenantId || !userId || !searchRunId || !actionType || !selectedResultIds?.length) {
+      return res.status(400).json({ success: false, error: 'tenantId, userId, searchRunId, actionType, and selectedResultIds are required' });
+    }
+    try {
+      const actionJob = await assistant.run({ tenantId, userId, searchRunId, actionType, selectedResultIds, prompt, provider });
+      return res.status(actionJob.status === 'failed' ? 500 : 202).json({ success: actionJob.status !== 'failed', actionJob });
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+  });
+
+  app.get('/v1/assistant/actions/:actionJobId', (req, res) => {
+    const actionJob = store.getAssistantAction(req.params.actionJobId);
+    if (!actionJob) return res.status(404).json({ success: false, error: 'Assistant action not found' });
+    return res.json({ success: true, actionJob });
   });
 
   return app;

@@ -57,9 +57,9 @@
 
 ## M6: Security
 
-- [ ] Add tenant/user access filter.
-- [ ] Add audit logs.
-- [ ] Add secret redaction.
+- [x] Add tenant/user access filter.
+- [x] Add audit logs.
+- [x] Add secret redaction.
 - [ ] Add deletion/reindex workflow.
 - [ ] Add per-source sync permissions.
 
@@ -87,25 +87,25 @@
 
 ## M9: Parallel Source Search Agents
 
-- [ ] Add `SearchRun` model.
-- [ ] Add per-source `SourceSearchAgent` abstraction.
-- [ ] Fan out selected-source searches in parallel.
-- [ ] Return partial source statuses.
-- [ ] Merge/rank/dedupe line items.
-- [ ] Add polling or SSE endpoint for run status/results.
-- [ ] Add source-agent failure isolation.
+- [x] Add `SearchRun` model.
+- [x] Add per-source `SourceSearchAgent` abstraction.
+- [x] Fan out selected-source searches in parallel.
+- [x] Return partial source statuses.
+- [x] Merge/rank/dedupe line items.
+- [x] Add polling endpoint for run status/results.
+- [x] Add source-agent failure isolation.
 
 ## M10: LLM And Artifact Actions
 
-- [ ] Add pluggable `ChatProvider` interface.
-- [ ] Add deterministic mock provider for tests.
-- [ ] Add OpenAI-compatible provider adapter.
+- [x] Add pluggable `ChatProvider` interface.
+- [x] Add deterministic mock provider for tests.
+- [x] Add OpenAI-compatible provider adapter.
 - [ ] Add Azure OpenAI provider placeholder.
 - [ ] Add Anthropic-compatible provider placeholder.
 - [ ] Add Cerebras-compatible provider placeholder.
-- [ ] Add assistant action API.
-- [ ] Add action types for summarize, Q&A, draft email, action items, compare
+- [x] Add assistant action API.
+- [x] Add action types for summarize, Q&A, draft email, action items, compare
       sources, create PowerPoint, and create PDF.
-- [ ] Add pluggable `ArtifactProvider` interface.
-- [ ] Add artifact provenance metadata.
-- [ ] Audit assistant and artifact actions.
+- [x] Add pluggable `ArtifactProvider` interface.
+- [x] Add artifact provenance metadata.
+- [x] Audit assistant and artifact actions.
