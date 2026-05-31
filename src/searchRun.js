@@ -19,7 +19,7 @@ export class SearchRunCoordinator {
       ? await this.store.withStoreLock(createRun)
       : await createRun();
     const promise = this.execute(run.id, { tenantId, userId, query, selectedSources, filters, limit });
-    if (wait) await promise;
+    if (wait) return await promise;
     return this.store.getSearchRun(run.id);
   }
 
