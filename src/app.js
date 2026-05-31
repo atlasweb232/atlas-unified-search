@@ -372,8 +372,9 @@ function productionReadinessReport({ config, store, queue, assistant, connectorC
 
 function connectorSetupGuide(checks) {
   return checks.map((check) => {
-    const missing = (check.requirements || [])
+    const missing = check.ready ? [] : (check.requirements || [])
       .filter((requirement) => !requirement.configured && !requirement.optional)
+      .filter((requirement) => !requirement.recommended)
       .map((requirement) => requirement.name);
     const base = {
       source: check.source,

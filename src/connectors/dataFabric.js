@@ -15,7 +15,7 @@ export class DataFabricConnector {
   requirements() {
     return [
       { name: 'DATA_FABRIC_BASE_URL', configured: Boolean(this.config.baseUrl) },
-      { name: 'DATA_FABRIC_API_TOKEN', configured: Boolean(this.config.apiToken), recommended: true },
+      { name: 'DATA_FABRIC_API_TOKEN', configured: Boolean(this.config.apiToken), recommended: true, optional: true },
       { name: 'DATA_FABRIC_READINESS_PATH', configured: Boolean(this.config.readinessPath), optional: true },
       { name: 'DATA_FABRIC_RECORDS_PATH', configured: Boolean(this.config.recordsPath), optional: true },
     ];
