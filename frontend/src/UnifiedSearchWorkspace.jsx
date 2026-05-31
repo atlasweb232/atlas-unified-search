@@ -188,7 +188,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
         </div>
         <label className="token-field">
           <span>API token</span>
-          <input type="password" value={authToken} onChange={(event) => saveAuthToken(event.target.value)} placeholder="Bearer token for protected API" />
+          <input data-testid="api-token-input" type="password" value={authToken} onChange={(event) => saveAuthToken(event.target.value)} placeholder="Bearer token for protected API" />
         </label>
         <button type="button" className="secondary-button" onClick={loadConnectors}>
           <RefreshCw size={15} />
@@ -202,9 +202,9 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
             const setupGuide = setupBySource[source];
             const status = sourceStatuses[source];
             return (
-              <div key={source} className={`connector-card ${check?.ready ? 'ready' : ''}`}>
+              <div key={source} data-testid={`connector-${source}`} className={`connector-card ${check?.ready ? 'ready' : ''}`}>
                 <label className="connector-row">
-                  <input type="checkbox" checked={selectedSources.has(source)} onChange={() => toggleSource(source)} />
+                  <input data-testid={`source-toggle-${source}`} type="checkbox" checked={selectedSources.has(source)} onChange={() => toggleSource(source)} />
                   <span className="source-icon">{sourceMeta[source]?.icon || 'SRC'}</span>
                   <span className="connector-main">
                     <strong>{sourceMeta[source]?.label || source}</strong>
@@ -248,8 +248,8 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
       <main className="result-panel">
         <form className="search-bar" onSubmit={startSearch}>
           <Search size={20} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search email, Slack, Drive, meetings, knowledge, and data fabric" />
-          <button type="submit" disabled={state.loading || !query.trim()}>
+          <input data-testid="search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search email, Slack, Drive, meetings, knowledge, and data fabric" />
+          <button data-testid="search-submit" type="submit" disabled={state.loading || !query.trim()}>
             {state.loading ? <Loader2 className="spin" size={18} /> : <Search size={18} />}
             Search
           </button>
@@ -265,23 +265,23 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
 
         <section className="results">
           {results.map((result) => (
-            <article key={result.id} className={`result ${selectedResults.has(result.id) ? 'selected' : ''}`}>
+            <article key={result.id} data-testid="result-row" className={`result ${selectedResults.has(result.id) ? 'selected' : ''}`}>
               <div className="result-line">
                 <input type="checkbox" checked={selectedResults.has(result.id)} onChange={() => toggleSelected(result.id)} />
-                <button type="button" className="expand" onClick={() => toggleExpanded(result.id)}>
+                <button type="button" data-testid="result-expand" className="expand" onClick={() => toggleExpanded(result.id)}>
                   {expanded.has(result.id) ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                 </button>
                 <span className="source-icon">{sourceMeta[result.source]?.icon || result.sourceIcon || 'SRC'}</span>
                 <div className="result-main">
                   <div className="meta">
                     <span>{result.sourceLabel || sourceMeta[result.source]?.label}</span>
-                    <span>{result.container}</span>
-                    <span>{result.author}</span>
+                    <span>{displayValue(result.container)}</span>
+                    <span>{displayValue(result.author)}</span>
                     <span>{formatDate(result.timestamp)}</span>
                     <span>{Math.round((result.score || 0) * 100)}%</span>
                   </div>
-                  <strong>{result.title}</strong>
-                  <p>{result.oneLine}</p>
+                  <strong>{displayValue(result.title)}</strong>
+                  <p>{displayValue(result.oneLine)}</p>
                 </div>
               </div>
               {expanded.has(result.id) && (
@@ -305,9 +305,9 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
             <span>{selectedResults.size} selected result(s)</span>
           </div>
         </div>
-        <textarea value={assistantPrompt} onChange={(event) => setAssistantPrompt(event.target.value)} placeholder="Ask for a summary, briefing, comparison, or report..." />
+        <textarea data-testid="assistant-prompt" value={assistantPrompt} onChange={(event) => setAssistantPrompt(event.target.value)} placeholder="Ask for a summary, briefing, comparison, or report..." />
         <div className="action-grid">
-          <button onClick={() => runAssistant('summarize')} disabled={!run || selectedResults.size === 0}><Send size={15} />Summarize</button>
+          <button data-testid="assistant-summarize" onClick={() => runAssistant('summarize')} disabled={!run || selectedResults.size === 0}><Send size={15} />Summarize</button>
           <button onClick={() => runAssistant('answer_question')} disabled={!run || selectedResults.size === 0}><Send size={15} />Ask</button>
           <button onClick={() => runAssistant('create_powerpoint')} disabled={!run || selectedResults.size === 0}><FileDown size={15} />PowerPoint</button>
           <button onClick={() => runAssistant('create_pdf')} disabled={!run || selectedResults.size === 0}><FileDown size={15} />PDF</button>
@@ -340,4 +340,12 @@ function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Unknown time';
   return date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function displayValue(value) {
+  if (value == null) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(displayValue).filter(Boolean).join(', ');
+  if (typeof value === 'object') return value.name || value.email || value.address || value.label || JSON.stringify(value);
+  return String(value);
 }

@@ -17,6 +17,7 @@
     "smoke:production": "node scripts/smoke-production.mjs",
     "smoke:production:ui": "node scripts/smoke-production-ui.mjs",
     "smoke:local-frontend": "node scripts/smoke-local-frontend-workflows.mjs",
+    "smoke:browser-ui": "node scripts/smoke-browser-ui.mjs",
     "seed:fixtures": "node scripts/seed-fixtures.mjs",
     "test": "node scripts/check-specs.mjs && node --test tests/*.test.js",
     "lint": "node scripts/check-specs.mjs"
@@ -34,5 +35,8 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "vite": "^6.0.6"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.60.0"
   }
 }
