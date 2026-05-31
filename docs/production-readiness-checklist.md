@@ -29,7 +29,14 @@ The unified search service is production-testable when these gates are true:
 - `GET /v1/connectors/readiness` returns explicit `ready/status/requirements` for each connector without exposing secret values.
 - `GET /v1/production-readiness` returns `readyForProductionTesting:true`, lists Slack/GDrive under `credentialBlockedSources` until real credentials are configured, and only sets `productionComplete:true` after every live source is proven.
 - `npm run audit:production-config` reports API/worker env wiring and credential blockers without printing secret values.
+- `npm run wire:production-connectors` can wire Slack, Google Drive, and Data Fabric credentials into both Container Apps once real credentials exist; it does not turn fixture coverage into live coverage by itself.
 - Data Fabric live readiness requires `DATA_FABRIC_BASE_URL` and a service that implements `GET /health` and `GET /records?tenantId=&userId=&dataset=&since=&limit=`; `DATA_FABRIC_API_TOKEN` is optional but recommended.
+
+Current test boundary:
+
+- Without `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_IDS`, Slack testing only proves the shared async ingestion, Postgres vector search, and assistant artifact pipeline using Slack-shaped fixtures.
+- Without Google OAuth refresh-token or service-account credentials, Google Drive testing only proves the connector contract and fixture path, not real Drive API access or attachment retrieval.
+- Email, conference bridge, and knowledge base are the current live connector tests because they have deployed backing services/storage configured.
 
 Known non-blocking follow-up after the first production test:
 

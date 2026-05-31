@@ -82,6 +82,45 @@ export UNIFIED_SEARCH_AUTH_TOKEN='<same token wired into Container App>'
 npm run audit:production-config
 ```
 
+Wire Slack, Google Drive, or Data Fabric credentials after the apps are already
+deployed:
+
+```bash
+export RESOURCE_GROUP='atlas-azure-backend-rg'
+export APP_NAME='atlas-unified-search'
+export WORKER_APP_NAME='atlas-unified-search-worker'
+
+# Slack live connector
+export SLACK_BOT_TOKEN='<xoxb-token>'
+export SLACK_CHANNEL_IDS='C0123456789,C0987654321'
+
+# Google Drive live connector, choose OAuth refresh token or service account
+export GOOGLE_CLIENT_ID='<oauth-client-id>'
+export GOOGLE_CLIENT_SECRET='<oauth-client-secret>'
+export GOOGLE_REFRESH_TOKEN='<oauth-refresh-token>'
+# or:
+export GOOGLE_SERVICE_ACCOUNT_JSON='<service-account-json>'
+export GDRIVE_FOLDER_IDS='<folder-id-1>,<folder-id-2>'
+
+# Data Fabric live connector
+export DATA_FABRIC_BASE_URL='https://<data-fabric-service>'
+export DATA_FABRIC_API_TOKEN='<optional-token>'
+export DATA_FABRIC_READINESS_PATH='/health'
+export DATA_FABRIC_RECORDS_PATH='/records'
+
+# Optional immediate runtime check
+export UNIFIED_SEARCH_BASE_URL='https://atlas-unified-search.proudfield-a201b3fd.eastus.azurecontainerapps.io'
+export UNIFIED_SEARCH_AUTH_TOKEN='<same token wired into Container App>'
+
+npm run wire:production-connectors
+npm run audit:production-config
+```
+
+The wiring command sets Container App secrets and env vars on both the API and
+worker without printing secret values. It does not fabricate live coverage:
+Slack and Google Drive remain credential-blocked until their readiness entries
+return `ready:true` and real `/v1/reindex/{source}` calls succeed.
+
 The audit reports:
 
 - API and worker image/revision/env names
