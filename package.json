@@ -14,6 +14,7 @@
     "build": "vite build frontend",
     "db:migrate": "node scripts/migrate-postgres.mjs",
     "audit:production-config": "node scripts/audit-production-config.mjs",
+    "validate:connector-credentials": "node scripts/validate-connector-credentials.mjs",
     "wire:production-connectors": "node scripts/wire-production-connectors.mjs",
     "smoke:production": "node scripts/smoke-production.mjs",
     "smoke:production:ui": "node scripts/smoke-production-ui.mjs",

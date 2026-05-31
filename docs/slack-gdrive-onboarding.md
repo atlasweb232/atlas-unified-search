@@ -24,10 +24,34 @@ All credentials stay backend-side.
 SLACK_CHANNEL_IDS=C0123456789,C9876543210
 ```
 
-7. Start a sync:
+7. Validate credentials before wiring them into Azure:
 
 ```bash
-curl -X POST http://localhost:4420/v1/sync/slack \
+export VALIDATE_CONNECTOR_SOURCES='slack'
+export VALIDATE_CONNECTOR_REQUIRE_CONFIG=true
+npm run validate:connector-credentials
+```
+
+The validator calls Slack `auth.test`, `conversations.info`, and a one-message
+`conversations.history` probe for configured channels. It does not print token
+values.
+
+8. Wire credentials into the Azure API and worker apps:
+
+```bash
+export RESOURCE_GROUP='atlas-azure-backend-rg'
+export APP_NAME='atlas-unified-search'
+export WORKER_APP_NAME='atlas-unified-search-worker'
+export UNIFIED_SEARCH_BASE_URL='https://atlas-unified-search.proudfield-a201b3fd.eastus.azurecontainerapps.io'
+export UNIFIED_SEARCH_AUTH_TOKEN='<same token wired into the API app>'
+npm run wire:production-connectors
+```
+
+9. Start a live sync:
+
+```bash
+curl -X POST "$UNIFIED_SEARCH_BASE_URL/v1/reindex/slack" \
+  -H "Authorization: Bearer $UNIFIED_SEARCH_AUTH_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"tenantId":"atlasweb","userId":"rakib","wait":true}'
 ```
@@ -58,10 +82,34 @@ GOOGLE_REFRESH_TOKEN=...
 GDRIVE_FOLDER_IDS=<optional comma-separated folder ids>
 ```
 
-6. Start a sync:
+6. Validate credentials before wiring them into Azure:
 
 ```bash
-curl -X POST http://localhost:4420/v1/sync/google_drive \
+export VALIDATE_CONNECTOR_SOURCES='google_drive'
+export VALIDATE_CONNECTOR_REQUIRE_CONFIG=true
+npm run validate:connector-credentials
+```
+
+The validator performs Drive auth and a one-file `files.list` probe. It reports
+whether the configured folder scope can see at least one file, without printing
+OAuth or service-account secret values.
+
+7. Wire credentials into the Azure API and worker apps:
+
+```bash
+export RESOURCE_GROUP='atlas-azure-backend-rg'
+export APP_NAME='atlas-unified-search'
+export WORKER_APP_NAME='atlas-unified-search-worker'
+export UNIFIED_SEARCH_BASE_URL='https://atlas-unified-search.proudfield-a201b3fd.eastus.azurecontainerapps.io'
+export UNIFIED_SEARCH_AUTH_TOKEN='<same token wired into the API app>'
+npm run wire:production-connectors
+```
+
+8. Start a live sync:
+
+```bash
+curl -X POST "$UNIFIED_SEARCH_BASE_URL/v1/reindex/google_drive" \
+  -H "Authorization: Bearer $UNIFIED_SEARCH_AUTH_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"tenantId":"atlasweb","userId":"rakib","wait":true}'
 ```
@@ -80,11 +128,15 @@ and share target Drive folders/files with the service account email.
 
 ## Background Vectorization Path
 
-Current implementation supports background jobs through `/v1/sync/:source`.
-Production should replace the in-process runner with:
+Current production deployment supports background jobs through `/v1/sync/:source`
+and `/v1/reindex/:source`:
 
-- Azure Service Bus topics for source events, normalized documents, chunks ready,
-  and artifact jobs
-- Postgres + pgvector for document/chunk/embedding storage
-- Connector checkpoints for Slack channel timestamps and Drive page tokens
-- Event webhooks for Slack Events API and Google Drive Changes/watch
+- Azure Service Bus queue `unified-search-sync`
+- single-replica API-backed scheduler app
+- Postgres + pgvector document/chunk/embedding storage
+- tenant/user/source-scoped checkpoints
+- worker-side vectorization and assistant artifact generation
+
+Later multi-user onboarding should add Slack Events API and Google Drive
+Changes/watch ingestion so changes flow into Service Bus near real time instead
+of relying only on scheduled scans.
