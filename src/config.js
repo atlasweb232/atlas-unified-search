@@ -14,6 +14,16 @@ function number(name, fallback) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function json(name, fallback) {
+  const value = process.env[name];
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
 export function loadConfig() {
   const authToken = process.env.UNIFIED_SEARCH_AUTH_TOKEN || '';
   const requireAuth = ['1', 'true', 'yes'].includes(String(process.env.UNIFIED_SEARCH_REQUIRE_AUTH || '').toLowerCase()) || Boolean(authToken);
@@ -27,6 +37,7 @@ export function loadConfig() {
       required: requireAuth,
       token: authToken,
     },
+    sourcePermissions: json('UNIFIED_SEARCH_SOURCE_PERMISSIONS', {}),
     postgres: {
       connectionString: process.env.POSTGRES_CONNECTION_STRING || '',
       ssl: !['0', 'false', 'no'].includes(String(process.env.POSTGRES_SSL || 'true').toLowerCase()),

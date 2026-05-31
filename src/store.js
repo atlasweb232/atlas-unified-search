@@ -61,12 +61,43 @@ export class JsonSearchStore {
     return this.state.documents[id] || null;
   }
 
+  deleteDocuments({ tenantId, userId, source = '', documentIds = [] }) {
+    const idSet = new Set(documentIds.filter(Boolean));
+    const deletedDocumentIds = [];
+    for (const document of Object.values(this.state.documents)) {
+      if (document.tenantId !== tenantId || document.userId !== userId) continue;
+      if (source && document.source !== source) continue;
+      if (idSet.size && !idSet.has(document.id)) continue;
+      deletedDocumentIds.push(document.id);
+      delete this.state.documents[document.id];
+    }
+    const deletedSet = new Set(deletedDocumentIds);
+    for (const [chunkId, chunk] of Object.entries(this.state.chunks)) {
+      if (deletedSet.has(chunk.documentId)) delete this.state.chunks[chunkId];
+    }
+    return { deleted: deletedDocumentIds.length, documentIds: deletedDocumentIds };
+  }
+
   setCheckpoint(key, checkpoint) {
     this.state.checkpoints[key] = { ...checkpoint, updatedAt: new Date().toISOString() };
   }
 
   getCheckpoint(key) {
     return this.state.checkpoints[key] || null;
+  }
+
+  deleteCheckpoints({ tenantId, userId, source = '' }) {
+    const prefix = source ? `${source}:${tenantId}:${userId}:` : '';
+    let deleted = 0;
+    for (const key of Object.keys(this.state.checkpoints)) {
+      const inScope = prefix
+        ? key.startsWith(prefix)
+        : key.includes(`:${tenantId}:${userId}:`);
+      if (!inScope) continue;
+      delete this.state.checkpoints[key];
+      deleted += 1;
+    }
+    return { deleted };
   }
 
   createJob({ source, tenantId, userId }) {

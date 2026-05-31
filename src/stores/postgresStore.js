@@ -183,7 +183,7 @@ function documentFromRow(row) {
     id: row.id, tenantId: row.tenant_id, userId: row.user_id, source: row.source, sourceId: row.source_id,
     title: row.title, summary: row.summary, author: row.author, container: row.container,
     timestamp: iso(row.timestamp), sourceUri: row.source_uri, body: row.body,
-    children: row.children || [], metadata: row.metadata || {}, updatedAt: iso(row.updated_at),
+    children: row.children || [], metadata: row.metadata || {}, createdAt: iso(row.created_at), updatedAt: iso(row.updated_at),
   };
 }
 

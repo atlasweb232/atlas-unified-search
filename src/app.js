@@ -69,6 +69,9 @@ export async function createApp(config) {
     if (!tenantId || !userId) {
       return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
     }
+    if (!sourceAllowed(config, tenantId, userId, req.params.source)) {
+      return res.status(403).json({ success: false, error: `Source is not enabled for this user: ${req.params.source}` });
+    }
     try {
       const job = await jobs.enqueue({ source: req.params.source, tenantId, userId, options, autoStart: !wait });
       if (wait) {
@@ -88,7 +91,11 @@ export async function createApp(config) {
     }
     try {
       await refreshStore(store);
-      const results = await searchEngine.search({ tenantId, userId, query, sources, filters, limit });
+      const allowedSources = filterAllowedSources(config, tenantId, userId, sources);
+      if (hasSourcePermissions(config) && !allowedSources.length) {
+        return res.status(403).json({ success: false, error: 'No sources are enabled for this user' });
+      }
+      const results = await searchEngine.search({ tenantId, userId, query, sources: allowedSources, filters, limit });
       store.audit({ eventType: 'search', tenantId, userId, queryHash: hashQuery(query), metadata: { sources, resultCount: results.length } });
       await store.save();
       return res.json({ success: true, query, results });
@@ -104,7 +111,11 @@ export async function createApp(config) {
     }
     try {
       await refreshStore(store);
-      const searchRun = await searchRuns.start({ tenantId, userId, query, sources, filters, limit, wait });
+      const allowedSources = filterAllowedSources(config, tenantId, userId, sources);
+      if (hasSourcePermissions(config) && !allowedSources.length) {
+        return res.status(403).json({ success: false, error: 'No sources are enabled for this user' });
+      }
+      const searchRun = await searchRuns.start({ tenantId, userId, query, sources: allowedSources, filters, limit, wait });
       return res.status(wait ? 200 : 202).json({ success: true, searchRun, results: searchRun.results || [] });
     } catch (error) {
       return res.status(500).json({ success: false, error: error.message });
@@ -125,6 +136,57 @@ export async function createApp(config) {
     if (!document) return res.status(404).json({ success: false, error: 'Document not found' });
     if (!matchesScope(req, document)) return res.status(403).json({ success: false, error: 'Forbidden' });
     return res.json({ success: true, document });
+  });
+
+  app.delete('/v1/documents', async (req, res) => {
+    const tenantId = req.body?.tenantId || req.query.tenantId;
+    const userId = req.body?.userId || req.query.userId;
+    const source = req.body?.source || req.query.source || '';
+    const documentIds = req.body?.documentIds || [];
+    const resetCheckpoints = Boolean(req.body?.resetCheckpoints || req.query.resetCheckpoints === 'true');
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    }
+    if (source && !sourceAllowed(config, tenantId, userId, source)) {
+      return res.status(403).json({ success: false, error: `Source is not enabled for this user: ${source}` });
+    }
+    await refreshStore(store);
+    const deleted = store.deleteDocuments({ tenantId, userId, source, documentIds });
+    const checkpoints = resetCheckpoints ? store.deleteCheckpoints({ tenantId, userId, source }) : { deleted: 0 };
+    store.audit({ eventType: 'documents_delete', tenantId, userId, source, metadata: { deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted } });
+    await store.save();
+    return res.json({ success: true, deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted, documentIds: deleted.documentIds });
+  });
+
+  app.post('/v1/reindex/:source', async (req, res) => {
+    const { tenantId, userId, options = {}, wait = false } = req.body || {};
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    }
+    if (!sourceAllowed(config, tenantId, userId, req.params.source)) {
+      return res.status(403).json({ success: false, error: `Source is not enabled for this user: ${req.params.source}` });
+    }
+    await refreshStore(store);
+    const deleted = store.deleteDocuments({ tenantId, userId, source: req.params.source });
+    const checkpoints = store.deleteCheckpoints({ tenantId, userId, source: req.params.source });
+    store.audit({ eventType: 'reindex_start', tenantId, userId, source: req.params.source, metadata: { deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted } });
+    await store.save();
+    try {
+      const job = await jobs.enqueue({
+        source: req.params.source,
+        tenantId,
+        userId,
+        options: { ...options, forceFullSync: true },
+        autoStart: !wait,
+      });
+      if (wait) {
+        const result = await jobs.run(job.id, { source: req.params.source, tenantId, userId, options: { ...options, forceFullSync: true } });
+        return res.json({ success: true, deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted, job: store.state.jobs[job.id], indexed: result.indexed });
+      }
+      return res.status(202).json({ success: true, deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted, job });
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message, deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted });
+    }
   });
 
   app.get('/v1/jobs', async (req, res) => {
@@ -180,4 +242,46 @@ function hashQuery(query) {
   let hash = 0;
   for (const char of String(query || '')) hash = Math.imul(31, hash) + char.charCodeAt(0) | 0;
   return `q_${Math.abs(hash)}`;
+}
+
+function filterAllowedSources(config, tenantId, userId, sources = []) {
+  const selected = Array.isArray(sources) ? sources.filter(Boolean) : [];
+  if (!hasSourcePermissions(config)) return selected;
+  if (!selected.length) return allowedSourcesFor(config, tenantId, userId);
+  return selected.filter((source) => sourceAllowed(config, tenantId, userId, source));
+}
+
+function sourceAllowed(config, tenantId, userId, source) {
+  const permissions = config.sourcePermissions || {};
+  if (!hasSourcePermissions(config)) return true;
+  const candidates = [
+    `${tenantId}:${userId}`,
+    `${tenantId}:*`,
+    `*:${userId}`,
+    '*:*',
+  ];
+  for (const key of candidates) {
+    const allowed = permissions[key];
+    if (Array.isArray(allowed)) return allowed.includes(source) || allowed.includes('*');
+  }
+  return false;
+}
+
+function allowedSourcesFor(config, tenantId, userId) {
+  const permissions = config.sourcePermissions || {};
+  const candidates = [
+    `${tenantId}:${userId}`,
+    `${tenantId}:*`,
+    `*:${userId}`,
+    '*:*',
+  ];
+  for (const key of candidates) {
+    const allowed = permissions[key];
+    if (Array.isArray(allowed)) return allowed;
+  }
+  return [];
+}
+
+function hasSourcePermissions(config) {
+  return Boolean(config.sourcePermissions && Object.keys(config.sourcePermissions).length);
 }

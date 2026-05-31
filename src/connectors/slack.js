@@ -1,4 +1,5 @@
 import { createDocument, oneLine, SOURCES } from '../model.js';
+import { checkpointKey } from './base.js';
 
 const SLACK_API_BASE = 'https://slack.com/api';
 
@@ -40,19 +41,38 @@ export class SlackConnector {
     };
   }
 
-  async sync({ tenantId, userId, options = {} }) {
+  async sync({ tenantId, userId, store, options = {} }) {
     if (options.fixtures) return options.fixtures.map((item) => slackFixtureToDocument({ tenantId, userId, item }));
     if (!this.isConfigured()) throw new Error('Slack connector is not configured');
     const channelIds = options.channelIds?.length ? options.channelIds : this.config.channelIds;
     const documents = [];
     for (const channelId of channelIds) {
+      const key = checkpointKey(this.source, tenantId, userId, `channel:${channelId}`);
+      const checkpoint = options.forceFullSync ? null : store?.getCheckpoint(key);
+      const oldest = options.sinceTs || checkpoint?.latestTs || '';
       const channel = await this.call('conversations.info', { channel: channelId }).catch(() => ({ channel: { id: channelId, name: channelId } }));
-      const messages = await this.paginate('conversations.history', { channel: channelId, limit: String(options.limit || this.config.limit) }, 'messages');
+      const messages = await this.paginate('conversations.history', {
+        channel: channelId,
+        limit: String(options.limit || this.config.limit),
+        ...(oldest ? { oldest } : {}),
+      }, 'messages');
+      let latestTs = checkpoint?.latestTs || '';
       for (const message of messages) {
         if (!message.ts || message.subtype === 'message_deleted') continue;
         const replies = message.thread_ts ? await this.paginate('conversations.replies', { channel: channelId, ts: message.thread_ts, limit: '200' }, 'messages') : [];
         const permalink = await this.call('chat.getPermalink', { channel: channelId, message_ts: message.ts }).then((data) => data.permalink).catch(() => '');
         documents.push(slackMessageToDocument({ tenantId, userId, channel: channel.channel, message, replies, permalink }));
+        if (!latestTs || slackTsNumber(message.ts) > slackTsNumber(latestTs)) latestTs = message.ts;
+      }
+      if (store && latestTs) {
+        store.setCheckpoint(key, {
+          source: this.source,
+          channelId,
+          channelName: channel.channel?.name || channelId,
+          latestTs,
+          lastSyncedAt: new Date().toISOString(),
+          syncedMessages: messages.length,
+        });
       }
     }
     return documents;
@@ -143,4 +163,9 @@ function normalizeFiles(files) {
 function slackTsToIso(ts) {
   const seconds = Number(String(ts).split('.')[0]);
   return Number.isFinite(seconds) ? new Date(seconds * 1000).toISOString() : new Date().toISOString();
+}
+
+function slackTsNumber(ts) {
+  const value = Number(ts);
+  return Number.isFinite(value) ? value : 0;
 }

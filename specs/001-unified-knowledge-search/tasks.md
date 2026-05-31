@@ -29,7 +29,7 @@
 - [x] Sync channel history.
 - [x] Sync thread replies.
 - [x] Normalize links and files.
-- [ ] Persist channel timestamp checkpoints.
+- [x] Persist channel timestamp checkpoints.
 
 ## M3: Google Drive
 
@@ -38,7 +38,7 @@
 - [x] Implement blob downloads.
 - [x] Implement Google Workspace export.
 - [x] Extract text from supported formats.
-- [ ] Persist modified-time/page-token checkpoints.
+- [x] Persist modified-time checkpoints.
 
 ## M4: Conference Blob
 
@@ -60,15 +60,15 @@
 - [x] Add tenant/user access filter.
 - [x] Add audit logs.
 - [x] Add secret redaction.
-- [ ] Add deletion/reindex workflow.
-- [ ] Add per-source sync permissions.
+- [x] Add deletion/reindex workflow.
+- [x] Add per-source sync permissions.
 
 ## M7: Deployment
 
-- [ ] Add Dockerfile.
-- [ ] Add Azure Container App deployment notes.
-- [ ] Add Postgres/pgvector migration.
-- [ ] Add scheduler/worker process.
+- [x] Add Dockerfile.
+- [x] Add Azure Container App deployment notes.
+- [x] Add Postgres/pgvector migration.
+- [x] Add scheduler/worker process.
 
 ## M8: Federated Search Workspace UI
 

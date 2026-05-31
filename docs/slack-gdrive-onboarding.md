@@ -32,6 +32,10 @@ curl -X POST http://localhost:4420/v1/sync/slack \
   -d '{"tenantId":"atlasweb","userId":"rakib","wait":true}'
 ```
 
+Subsequent Slack syncs resume from the last stored channel timestamp for the
+same tenant/user/channel. To intentionally rebuild a source, call
+`/v1/reindex/slack` or pass `options.forceFullSync=true`.
+
 Production note: later user onboarding should replace this with WorkOS Pipes or
 Nango. The connector should receive tokens from a `TokenProvider` and should not
 care whether the token came from `.env`, WorkOS, Nango, or direct OAuth.
@@ -61,6 +65,10 @@ curl -X POST http://localhost:4420/v1/sync/google_drive \
   -H 'Content-Type: application/json' \
   -d '{"tenantId":"atlasweb","userId":"rakib","wait":true}'
 ```
+
+Subsequent Google Drive syncs resume from the last stored modified time for the
+same tenant/user/folder scope. To intentionally rebuild a source, call
+`/v1/reindex/google_drive` or pass `options.forceFullSync=true`.
 
 For service-account mode, set:
 

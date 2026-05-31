@@ -12,6 +12,7 @@ function config(dataDir) {
     openaiApiKey: '',
     embeddingModel: 'test',
     auth: { required: false, token: '' },
+    sourcePermissions: {},
     postgres: { connectionString: '', ssl: false },
     serviceBus: { connectionString: '', syncQueueName: 'unified-search-sync' },
     artifacts: { azureStorageConnectionString: '', container: 'unified-search-artifacts', publicBaseUrl: '' },
@@ -55,6 +56,17 @@ async function post(base, url, body) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+  });
+  const data = await response.json();
+  if (!response.ok || data.success === false) throw new Error(data.error || 'request failed');
+  return data;
+}
+
+async function request(base, url, { method = 'GET', body } = {}) {
+  const response = await fetch(`${base}${url}`, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
   });
   const data = await response.json();
   if (!response.ok || data.success === false) throw new Error(data.error || 'request failed');
@@ -143,6 +155,65 @@ test('unified search indexes fixture documents across all connector types', asyn
     });
     assert.equal(ppt.actionJob.status, 'completed');
     assert.equal(ppt.actionJob.artifactIds.length, 1);
+
+    const deleted = await request(base, '/v1/documents', {
+      method: 'DELETE',
+      body: { tenantId, userId, source: 'slack', resetCheckpoints: true },
+    });
+    assert.equal(deleted.deleted, 1);
+    const deletedSearch = await post(base, '/v1/search', { tenantId, userId, query: 'Redis deployment lease', sources: ['slack'] });
+    assert.equal(deletedSearch.results.length, 0);
+
+    const reindex = await post(base, '/v1/reindex/slack', {
+      tenantId,
+      userId,
+      wait: true,
+      options: { fixtures: fixtures.slack },
+    });
+    assert.equal(reindex.success, true);
+    assert.equal(reindex.indexed, 1);
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
+test('source permissions block disallowed sync and search sources', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-perms-'));
+  let server;
+  try {
+    const app = await createApp({
+      ...config(dir),
+      sourcePermissions: { 'atlasweb:rakib': ['email'] },
+    });
+    server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+
+    const denied = await fetch(`${base}/v1/sync/slack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'atlasweb', userId: 'rakib', wait: true, options: { fixtures: [] } }),
+    });
+    assert.equal(denied.status, 403);
+
+    await post(base, '/v1/sync/email', {
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      wait: true,
+      options: { fixtures: [{ id: 'mail1', subject: 'Allowed email', body: 'Only email should be searchable.' }] },
+    });
+    const allowed = await post(base, '/v1/search', { tenantId: 'atlasweb', userId: 'rakib', query: 'email', sources: ['email', 'slack'] });
+    assert.equal(allowed.results.length, 1);
+    assert.equal(allowed.results[0].source, 'email');
+
+    const noPermission = await fetch(`${base}/v1/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'atlasweb', userId: 'other', query: 'data' }),
+    });
+    assert.equal(noPermission.status, 403);
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     await new Promise((resolve) => setTimeout(resolve, 25));

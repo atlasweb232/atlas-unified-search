@@ -52,3 +52,7 @@ export async function runConnectorSync({ connector, tenantId, userId, store, sea
   await store.save();
   return { documents, indexed };
 }
+
+export function checkpointKey(source, tenantId, userId, name) {
+  return `${source}:${tenantId}:${userId}:${name}`;
+}

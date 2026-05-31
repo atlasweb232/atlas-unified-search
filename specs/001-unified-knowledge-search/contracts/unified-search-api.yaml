@@ -57,6 +57,12 @@ paths:
       responses:
         "200":
           description: Connector status list
+  /v1/connectors/readiness:
+    get:
+      summary: Check configured connector readiness without exposing secret values
+      responses:
+        "200":
+          description: Connector readiness checks
   /v1/sync/{source}:
     post:
       summary: Start a source sync
@@ -66,10 +72,29 @@ paths:
           required: true
           schema:
             type: string
-            enum: [slack, google_drive, conference_blob, email]
+            enum: [slack, google_drive, conference_bridge, email, knowledge_base, data_fabric]
       responses:
         "202":
           description: Sync accepted
+  /v1/reindex/{source}:
+    post:
+      summary: Delete scoped source data, reset source checkpoints, and start a full source sync
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [slack, google_drive, conference_bridge, email, knowledge_base, data_fabric]
+      responses:
+        "202":
+          description: Reindex accepted
+  /v1/documents:
+    delete:
+      summary: Delete documents scoped by tenant/user and optional source or document IDs
+      responses:
+        "200":
+          description: Scoped deletion result
   /v1/documents/{documentId}:
     get:
       summary: Get expandable document details

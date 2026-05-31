@@ -1,5 +1,6 @@
 import { google } from 'googleapis';
 import { createDocument, oneLine, SOURCES } from '../model.js';
+import { checkpointKey } from './base.js';
 
 const EXPORT_TYPES = {
   'application/vnd.google-apps.document': 'text/plain',
@@ -52,15 +53,31 @@ export class GoogleDriveConnector {
     };
   }
 
-  async sync({ tenantId, userId, options = {} }) {
+  async sync({ tenantId, userId, store, options = {} }) {
     if (options.fixtures) return options.fixtures.map((item) => driveFixtureToDocument({ tenantId, userId, item }));
     if (!this.isConfigured()) throw new Error('Google Drive connector is not configured');
     const drive = google.drive({ version: 'v3', auth: await this.auth() });
-    const files = await this.listFiles(drive, options);
+    const folderIds = options.folderIds?.length ? options.folderIds : this.config.folderIds;
+    const checkpointName = `files:${folderIds.length ? folderIds.join(',') : 'all'}`;
+    const key = checkpointKey(this.source, tenantId, userId, checkpointName);
+    const checkpoint = options.forceFullSync ? null : store?.getCheckpoint(key);
+    const modifiedAfter = options.modifiedAfter || checkpoint?.latestModifiedTime || '';
+    const files = await this.listFiles(drive, { ...options, folderIds, modifiedAfter });
     const documents = [];
+    let latestModifiedTime = checkpoint?.latestModifiedTime || '';
     for (const file of files) {
       const extracted = await this.extractText(drive, file).catch((error) => ({ text: '', error: error.message }));
       documents.push(driveFileToDocument({ tenantId, userId, file, extracted }));
+      if (isAfter(file.modifiedTime, latestModifiedTime)) latestModifiedTime = file.modifiedTime;
+    }
+    if (store && latestModifiedTime) {
+      store.setCheckpoint(key, {
+        source: this.source,
+        folderIds,
+        latestModifiedTime,
+        lastSyncedAt: new Date().toISOString(),
+        syncedFiles: files.length,
+      });
     }
     return documents;
   }
@@ -83,10 +100,12 @@ export class GoogleDriveConnector {
     const folderQuery = folderIds.length
       ? ` and (${folderIds.map((id) => `'${id}' in parents`).join(' or ')})`
       : '';
+    const modifiedQuery = options.modifiedAfter ? ` and modifiedTime > '${escapeDriveQueryValue(options.modifiedAfter)}'` : '';
     const response = await drive.files.list({
-      q: `trashed=false${folderQuery}`,
+      q: `trashed=false${folderQuery}${modifiedQuery}`,
       pageSize: options.limit || this.config.limit,
       fields: 'files(id,name,mimeType,modifiedTime,webViewLink,owners(displayName,emailAddress),parents,size)',
+      orderBy: 'modifiedTime asc',
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
     });
@@ -107,6 +126,16 @@ export class GoogleDriveConnector {
     }
     return { text: '', exportMimeType: '', skipped: 'binary_or_unsupported' };
   }
+}
+
+function isAfter(left, right) {
+  if (!left) return false;
+  if (!right) return true;
+  return new Date(left).getTime() > new Date(right).getTime();
+}
+
+function escapeDriveQueryValue(value) {
+  return String(value || '').replace(/'/g, "\\'");
 }
 
 function driveFixtureToDocument({ tenantId, userId, item }) {
