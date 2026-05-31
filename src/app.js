@@ -37,6 +37,7 @@ export async function createApp(config) {
   app.locals.services = { store, searchEngine, registry, jobs, searchRuns, assistant, queue };
 
   app.get('/v1/health', (req, res) => {
+    refreshStore(store).then(() => {
     res.json({
       success: true,
       service: 'atlas-unified-search',
@@ -47,6 +48,7 @@ export async function createApp(config) {
       artifacts: { backend: assistant.artifactProvider.name, configured: assistant.artifactProvider.configured() },
       connectors: registry.list(),
     });
+    }).catch((error) => res.status(503).json({ success: false, error: error.message }));
   });
 
   app.get('/v1/connectors', (req, res) => {
@@ -76,6 +78,7 @@ export async function createApp(config) {
       return res.status(400).json({ success: false, error: 'tenantId, userId, and query are required' });
     }
     try {
+      await refreshStore(store);
       const results = await searchEngine.search({ tenantId, userId, query, sources, filters, limit });
       store.audit({ eventType: 'search', tenantId, userId, queryHash: hashQuery(query), metadata: { sources, resultCount: results.length } });
       await store.save();
@@ -91,6 +94,7 @@ export async function createApp(config) {
       return res.status(400).json({ success: false, error: 'tenantId, userId, and query are required' });
     }
     try {
+      await refreshStore(store);
       const searchRun = await searchRuns.start({ tenantId, userId, query, sources, filters, limit, wait });
       return res.status(wait ? 200 : 202).json({ success: true, searchRun, results: searchRun.results || [] });
     } catch (error) {
@@ -98,21 +102,24 @@ export async function createApp(config) {
     }
   });
 
-  app.get('/v1/search-runs/:searchRunId', (req, res) => {
+  app.get('/v1/search-runs/:searchRunId', async (req, res) => {
+    await refreshStore(store);
     const searchRun = store.getSearchRun(req.params.searchRunId);
     if (!searchRun) return res.status(404).json({ success: false, error: 'Search run not found' });
     if (!matchesScope(req, searchRun)) return res.status(403).json({ success: false, error: 'Forbidden' });
     return res.json({ success: true, searchRun, results: searchRun.results || [] });
   });
 
-  app.get('/v1/documents/:documentId', (req, res) => {
+  app.get('/v1/documents/:documentId', async (req, res) => {
+    await refreshStore(store);
     const document = store.getDocument(req.params.documentId);
     if (!document) return res.status(404).json({ success: false, error: 'Document not found' });
     if (!matchesScope(req, document)) return res.status(403).json({ success: false, error: 'Forbidden' });
     return res.json({ success: true, document });
   });
 
-  app.get('/v1/jobs', (req, res) => {
+  app.get('/v1/jobs', async (req, res) => {
+    await refreshStore(store);
     res.json({ success: true, jobs: jobs.listJobs() });
   });
 
@@ -122,6 +129,7 @@ export async function createApp(config) {
       return res.status(400).json({ success: false, error: 'tenantId, userId, searchRunId, actionType, and selectedResultIds are required' });
     }
     try {
+      await refreshStore(store);
       const actionJob = await assistant.run({ tenantId, userId, searchRunId, actionType, selectedResultIds, prompt, provider });
       return res.status(actionJob.status === 'failed' ? 500 : 202).json({ success: actionJob.status !== 'failed', actionJob });
     } catch (error) {
@@ -129,7 +137,8 @@ export async function createApp(config) {
     }
   });
 
-  app.get('/v1/assistant/actions/:actionJobId', (req, res) => {
+  app.get('/v1/assistant/actions/:actionJobId', async (req, res) => {
+    await refreshStore(store);
     const actionJob = store.getAssistantAction(req.params.actionJobId);
     if (!actionJob) return res.status(404).json({ success: false, error: 'Assistant action not found' });
     if (!matchesScope(req, actionJob)) return res.status(403).json({ success: false, error: 'Forbidden' });
@@ -146,6 +155,10 @@ export async function createApp(config) {
   });
 
   return app;
+}
+
+async function refreshStore(store) {
+  if (typeof store.refresh === 'function') await store.refresh();
 }
 
 function matchesScope(req, row) {

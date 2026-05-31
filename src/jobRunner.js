@@ -24,7 +24,7 @@ export class JobRunner {
   }
 
   async run(jobId, { source, tenantId, userId, options = {} }) {
-    this.store.updateJob(jobId, { status: 'running', startedAt: new Date().toISOString() });
+    this.store.updateJob(jobId, { source, tenantId, userId, status: 'running', startedAt: new Date().toISOString() });
     this.store.audit({ eventType: 'sync_start', tenantId, userId, source, metadata: { jobId } });
     await this.store.save();
     try {

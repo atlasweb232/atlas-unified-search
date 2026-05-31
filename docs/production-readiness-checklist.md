@@ -15,6 +15,8 @@ The unified search service is production-testable when these gates are true:
 - Email results use `EMAIL_VECTOR_SEARCH_URL` to federate against the existing Atlas email vector service.
 - Tenant/user IDs are supplied on every sync, search, search-run, document, and assistant action request.
 - Cross-tenant reads are rejected by API tests and manual smoke tests.
+- `npm run smoke:production` passes with `UNIFIED_SEARCH_SMOKE_MODE=inline`.
+- `npm run smoke:production` passes with `UNIFIED_SEARCH_SMOKE_MODE=async`, proving Service Bus worker ownership.
 
 Known non-blocking follow-up after the first production test:
 

@@ -77,7 +77,9 @@ export class JsonSearchStore {
   }
 
   updateJob(id, patch) {
-    this.state.jobs[id] = { ...(this.state.jobs[id] || { id }), ...patch, updatedAt: new Date().toISOString() };
+    const now = new Date().toISOString();
+    const existing = this.state.jobs[id] || { id, createdAt: now, indexed: 0, error: '' };
+    this.state.jobs[id] = { ...existing, ...patch, createdAt: existing.createdAt || patch.createdAt || now, updatedAt: now };
     return this.state.jobs[id];
   }
 

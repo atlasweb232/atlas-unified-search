@@ -11,6 +11,7 @@
     "start:worker": "node src/worker.js",
     "build": "vite build frontend",
     "db:migrate": "node scripts/migrate-postgres.mjs",
+    "smoke:production": "node scripts/smoke-production.mjs",
     "seed:fixtures": "node scripts/seed-fixtures.mjs",
     "test": "node scripts/check-specs.mjs && node --test tests/*.test.js",
     "lint": "node scripts/check-specs.mjs"

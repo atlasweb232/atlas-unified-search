@@ -13,6 +13,10 @@ export class PostgresSearchStore extends JsonSearchStore {
     await this.loadStateFromPostgres();
   }
 
+  async refresh() {
+    await this.loadStateFromPostgres();
+  }
+
   async save() {
     const client = await this.pool.connect();
     try {
@@ -140,7 +144,7 @@ async function upsertJob(client, job) {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now(),$10,$11)
      ON CONFLICT (id) DO UPDATE SET status=EXCLUDED.status, indexed=EXCLUDED.indexed, error=EXCLUDED.error,
       payload=EXCLUDED.payload, updated_at=now(), started_at=EXCLUDED.started_at, completed_at=EXCLUDED.completed_at`,
-    [job.id, job.source, job.tenantId, job.userId, job.status, job.indexed || 0, job.error || '', JSON.stringify(job), nullableIso(job.createdAt), nullableIso(job.startedAt), nullableIso(job.completedAt)],
+    [job.id, job.source, job.tenantId, job.userId, job.status, job.indexed || 0, job.error || '', JSON.stringify(job), nullableIso(job.createdAt) || new Date().toISOString(), nullableIso(job.startedAt), nullableIso(job.completedAt)],
   );
 }
 
