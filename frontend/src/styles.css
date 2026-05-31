@@ -52,15 +52,100 @@ h2 {
   gap: 8px;
 }
 
+.connector-card {
+  border: 1px solid #e1e6ef;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.connector-card.ready {
+  border-color: #99d6b4;
+}
+
 .connector-row {
   display: grid;
   grid-template-columns: 18px 38px 1fr;
   align-items: center;
   gap: 10px;
-  border: 1px solid #e1e6ef;
-  border-radius: 8px;
   padding: 10px;
   cursor: pointer;
+}
+
+.connector-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 0 10px 10px;
+}
+
+.connector-actions button {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  border: 1px solid #dfe5ef;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #273244;
+  height: 30px;
+  cursor: pointer;
+}
+
+.requirements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 10px 10px;
+}
+
+.requirements span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid #efd4d4;
+  border-radius: 999px;
+  color: #8a2f2f;
+  background: #fff7f7;
+  padding: 3px 6px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.requirements span.ok {
+  border-color: #c7ead4;
+  background: #f0fbf4;
+  color: #1f7a43;
+}
+
+.token-field {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 6px;
+}
+
+.token-field span {
+  color: #647189;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.token-field input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #dfe5ef;
+  border-radius: 7px;
+  padding: 9px;
+}
+
+.maintenance-message {
+  margin-top: 12px;
+  border: 1px solid #dfe5ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #344154;
+  padding: 10px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .source-icon {
@@ -98,7 +183,7 @@ h2 {
   min-width: 0;
 }
 
-.search-bar button, .action-grid button {
+.search-bar button, .action-grid button, .secondary-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -110,6 +195,14 @@ h2 {
   font-weight: 700;
   padding: 9px 12px;
   cursor: pointer;
+}
+
+.secondary-button {
+  width: 100%;
+  background: #f4f6fa;
+  color: #273244;
+  border: 1px solid #dfe5ef;
+  margin: 10px 0 18px;
 }
 
 button:disabled {

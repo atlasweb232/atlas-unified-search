@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Bot, ChevronDown, ChevronRight, FileDown, Loader2, Search, Send, Sparkles } from 'lucide-react';
+import { Bot, ChevronDown, ChevronRight, FileDown, Loader2, RefreshCw, RotateCcw, Search, Send, Sparkles, Trash2 } from 'lucide-react';
 import { apiRequest, sourceMeta } from './api.js';
 
 const DEFAULT_SOURCES = ['email', 'slack', 'google_drive', 'conference_bridge', 'knowledge_base', 'data_fabric'];
 
 export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
   const [connectors, setConnectors] = useState([]);
+  const [readiness, setReadiness] = useState([]);
   const [selectedSources, setSelectedSources] = useState(new Set(DEFAULT_SOURCES));
   const [query, setQuery] = useState('');
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem('atlas_unified_search_auth_token') || '');
   const [run, setRun] = useState(null);
   const [results, setResults] = useState([]);
   const [expanded, setExpanded] = useState(new Set());
@@ -15,14 +17,34 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
   const [assistantPrompt, setAssistantPrompt] = useState('');
   const [assistantJobs, setAssistantJobs] = useState([]);
   const [state, setState] = useState({ loading: false, error: '' });
+  const [maintenance, setMaintenance] = useState({ source: '', busy: false, message: '' });
 
   useEffect(() => {
-    apiRequest(apiBaseUrl, '/v1/connectors')
-      .then((data) => setConnectors(data.connectors || []))
-      .catch((error) => setState((current) => ({ ...current, error: error.message })));
-  }, [apiBaseUrl]);
+    loadConnectors();
+  }, [apiBaseUrl, authToken]);
+
+  async function loadConnectors() {
+    setState((current) => ({ ...current, error: '' }));
+    try {
+      const [connectorData, readinessData] = await Promise.all([
+        apiRequest(apiBaseUrl, '/v1/connectors', { authToken }),
+        apiRequest(apiBaseUrl, '/v1/connectors/readiness', { authToken }),
+      ]);
+      setConnectors(connectorData.connectors || []);
+      setReadiness(readinessData.checks || []);
+    } catch (error) {
+      setState((current) => ({ ...current, error: error.message }));
+    }
+  }
+
+  function saveAuthToken(value) {
+    setAuthToken(value);
+    if (value) localStorage.setItem('atlas_unified_search_auth_token', value);
+    else localStorage.removeItem('atlas_unified_search_auth_token');
+  }
 
   const sourceStatuses = useMemo(() => Object.fromEntries((run?.sourceStatuses || []).map((item) => [item.source, item])), [run]);
+  const readinessBySource = useMemo(() => Object.fromEntries(readiness.map((item) => [item.source, item])), [readiness]);
 
   async function startSearch(event) {
     event?.preventDefault();
@@ -32,6 +54,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
     try {
       const data = await apiRequest(apiBaseUrl, '/v1/search-runs', {
         method: 'POST',
+        authToken,
         body: JSON.stringify({
           tenantId,
           userId,
@@ -56,6 +79,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
     try {
       const data = await apiRequest(apiBaseUrl, '/v1/assistant/actions', {
         method: 'POST',
+        authToken,
         body: JSON.stringify({
           tenantId,
           userId,
@@ -98,6 +122,56 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
     });
   }
 
+  async function syncSource(source) {
+    setMaintenance({ source, busy: true, message: '' });
+    try {
+      const data = await apiRequest(apiBaseUrl, `/v1/sync/${source}`, {
+        method: 'POST',
+        authToken,
+        body: JSON.stringify({ tenantId, userId, wait: false }),
+      });
+      setMaintenance({ source, busy: false, message: `Queued ${sourceMeta[source]?.label || source}: ${data.job?.id || 'job accepted'}` });
+    } catch (error) {
+      setMaintenance({ source, busy: false, message: error.message });
+    }
+  }
+
+  async function reindexSource(source) {
+    if (!window.confirm(`Reset and reindex ${sourceMeta[source]?.label || source} for this user?`)) return;
+    setMaintenance({ source, busy: true, message: '' });
+    try {
+      const data = await apiRequest(apiBaseUrl, `/v1/reindex/${source}`, {
+        method: 'POST',
+        authToken,
+        body: JSON.stringify({ tenantId, userId, wait: false }),
+      });
+      setMaintenance({ source, busy: false, message: `Reindex queued after deleting ${data.deleted || 0} document(s).` });
+      const removedResultIds = new Set(results.filter((result) => result.source === source).map((result) => result.id));
+      setResults((current) => current.filter((result) => result.source !== source));
+      setSelectedResults((current) => new Set([...current].filter((id) => !removedResultIds.has(id))));
+    } catch (error) {
+      setMaintenance({ source, busy: false, message: error.message });
+    }
+  }
+
+  async function clearSource(source) {
+    if (!window.confirm(`Delete indexed ${sourceMeta[source]?.label || source} documents for this user?`)) return;
+    setMaintenance({ source, busy: true, message: '' });
+    try {
+      const data = await apiRequest(apiBaseUrl, '/v1/documents', {
+        method: 'DELETE',
+        authToken,
+        body: JSON.stringify({ tenantId, userId, source, resetCheckpoints: true }),
+      });
+      setMaintenance({ source, busy: false, message: `Deleted ${data.deleted || 0} document(s).` });
+      const removedResultIds = new Set(results.filter((result) => result.source === source).map((result) => result.id));
+      setResults((current) => current.filter((result) => result.source !== source));
+      setSelectedResults((current) => new Set([...current].filter((id) => !removedResultIds.has(id))));
+    } catch (error) {
+      setMaintenance({ source, busy: false, message: error.message });
+    }
+  }
+
   return (
     <div className="workspace">
       <aside className="source-panel">
@@ -108,23 +182,53 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
             <span>{tenantId} / {userId}</span>
           </div>
         </div>
+        <label className="token-field">
+          <span>API token</span>
+          <input type="password" value={authToken} onChange={(event) => saveAuthToken(event.target.value)} placeholder="Bearer token for protected API" />
+        </label>
+        <button type="button" className="secondary-button" onClick={loadConnectors}>
+          <RefreshCw size={15} />
+          Refresh
+        </button>
         <h2>Connectors</h2>
         <div className="connector-list">
           {DEFAULT_SOURCES.map((source) => {
             const connector = connectors.find((item) => item.source === source);
+            const check = readinessBySource[source];
             const status = sourceStatuses[source];
             return (
-              <label key={source} className="connector-row">
-                <input type="checkbox" checked={selectedSources.has(source)} onChange={() => toggleSource(source)} />
-                <span className="source-icon">{sourceMeta[source]?.icon || 'SRC'}</span>
-                <span className="connector-main">
-                  <strong>{sourceMeta[source]?.label || source}</strong>
-                  <small>{status?.status || (connector?.configured ? 'configured' : 'not configured')}</small>
-                </span>
-              </label>
+              <div key={source} className={`connector-card ${check?.ready ? 'ready' : ''}`}>
+                <label className="connector-row">
+                  <input type="checkbox" checked={selectedSources.has(source)} onChange={() => toggleSource(source)} />
+                  <span className="source-icon">{sourceMeta[source]?.icon || 'SRC'}</span>
+                  <span className="connector-main">
+                    <strong>{sourceMeta[source]?.label || source}</strong>
+                    <small>{status?.status || check?.status || (connector?.configured ? 'configured' : 'not configured')}</small>
+                  </span>
+                </label>
+                <div className="connector-actions">
+                  <button type="button" title="Sync source" onClick={() => syncSource(source)} disabled={maintenance.busy || !check?.ready}>
+                    <RefreshCw size={14} />
+                  </button>
+                  <button type="button" title="Reset and reindex source" onClick={() => reindexSource(source)} disabled={maintenance.busy || !check?.ready}>
+                    <RotateCcw size={14} />
+                  </button>
+                  <button type="button" title="Delete indexed source data" onClick={() => clearSource(source)} disabled={maintenance.busy}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                {Boolean(check?.requirements?.length) && (
+                  <div className="requirements">
+                    {check.requirements.map((requirement) => (
+                      <span key={`${source}-${requirement.name}`} className={requirement.configured ? 'ok' : ''}>{requirement.name}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
+        {maintenance.message && <div className="maintenance-message">{maintenance.message}</div>}
       </aside>
 
       <main className="result-panel">

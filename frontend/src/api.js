@@ -1,8 +1,11 @@
 export async function apiRequest(apiBaseUrl, path, options = {}) {
+  const authToken = options.authToken || localStorage.getItem('atlas_unified_search_auth_token') || '';
+  const { authToken: _authToken, ...fetchOptions } = options;
   const response = await fetch(`${apiBaseUrl}${path}`, {
-    ...options,
+    ...fetchOptions,
     headers: {
       'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       ...(options.headers || {}),
     },
   });
@@ -18,6 +21,6 @@ export const sourceMeta = {
   slack: { label: 'Slack', icon: 'SL' },
   google_drive: { label: 'GDrive', icon: 'GD' },
   conference_bridge: { label: 'Bridge', icon: 'CB' },
-  knowledge_base: { label: 'KB', icon: 'KB' },
-  data_fabric: { label: 'Fabric', icon: 'DF' },
+  knowledge_base: { label: 'Knowledge', icon: 'KB' },
+  data_fabric: { label: 'Data Fabric', icon: 'DF' },
 };
