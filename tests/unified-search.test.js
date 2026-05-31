@@ -41,6 +41,9 @@ test('api auth boundary blocks protected endpoints when enabled', async () => {
     const unauthorized = await fetch(`${base}/v1/connectors`);
     assert.equal(unauthorized.status, 401);
 
+    const frontend = await fetch(`${base}/`);
+    assert.equal(frontend.status, 200);
+
     const authorized = await fetch(`${base}/v1/connectors`, {
       headers: { Authorization: 'Bearer test-token' },
     });

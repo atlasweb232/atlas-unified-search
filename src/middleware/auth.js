@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 export function requireApiAuth(config) {
   return (req, res, next) => {
     if (req.path === '/v1/health') return next();
+    if (!req.path.startsWith('/v1/')) return next();
     if (!config.auth?.required) return next();
 
     const header = String(req.headers.authorization || '');
