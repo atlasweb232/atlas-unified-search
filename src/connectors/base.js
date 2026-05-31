@@ -17,6 +17,31 @@ export class ConnectorRegistry {
       configured: connector.isConfigured(),
       practical: connector.practical,
       description: connector.description,
+      requirements: typeof connector.requirements === 'function' ? connector.requirements() : [],
+    }));
+  }
+
+  async readiness(source = '') {
+    const connectors = source ? [this.get(source)] : [...this.connectors.values()];
+    return Promise.all(connectors.map(async (connector) => {
+      const base = {
+        source: connector.source,
+        configured: connector.isConfigured(),
+        practical: connector.practical,
+        requirements: typeof connector.requirements === 'function' ? connector.requirements() : [],
+      };
+      if (!connector.isConfigured()) {
+        return { ...base, ready: false, status: 'missing_configuration' };
+      }
+      if (typeof connector.checkReadiness !== 'function') {
+        return { ...base, ready: true, status: 'configured' };
+      }
+      try {
+        const result = await connector.checkReadiness();
+        return { ...base, ready: Boolean(result.ready), status: result.status || 'checked', details: result.details || {} };
+      } catch (error) {
+        return { ...base, ready: false, status: 'check_failed', error: error.message };
+      }
     }));
   }
 }

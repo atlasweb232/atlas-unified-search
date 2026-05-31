@@ -17,6 +17,7 @@ The unified search service is production-testable when these gates are true:
 - Cross-tenant reads are rejected by API tests and manual smoke tests.
 - `npm run smoke:production` passes with `UNIFIED_SEARCH_SMOKE_MODE=inline`.
 - `npm run smoke:production` passes with `UNIFIED_SEARCH_SMOKE_MODE=async`, proving Service Bus worker ownership.
+- `GET /v1/connectors/readiness` returns explicit `ready/status/requirements` for each connector without exposing secret values.
 
 Known non-blocking follow-up after the first production test:
 

@@ -22,6 +22,36 @@ export class GoogleDriveConnector {
     );
   }
 
+  requirements() {
+    return [
+      { name: 'GOOGLE_SERVICE_ACCOUNT_JSON', configured: Boolean(this.config.serviceAccountJson), alternativeGroup: 'google_auth' },
+      { name: 'GOOGLE_CLIENT_ID', configured: Boolean(this.config.clientId), alternativeGroup: 'google_auth' },
+      { name: 'GOOGLE_CLIENT_SECRET', configured: Boolean(this.config.clientSecret), alternativeGroup: 'google_auth' },
+      { name: 'GOOGLE_REFRESH_TOKEN', configured: Boolean(this.config.refreshToken), alternativeGroup: 'google_auth' },
+      { name: 'GDRIVE_FOLDER_IDS', configured: Boolean(this.config.folderIds.length), optional: true },
+    ];
+  }
+
+  async checkReadiness() {
+    const drive = google.drive({ version: 'v3', auth: await this.auth() });
+    const response = await drive.files.list({
+      q: 'trashed=false',
+      pageSize: 1,
+      fields: 'files(id,name,mimeType),nextPageToken',
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+    return {
+      ready: true,
+      status: 'ok',
+      details: {
+        sampleFileVisible: Boolean(response.data.files?.length),
+        folderScoped: Boolean(this.config.folderIds.length),
+        configuredFolderCount: this.config.folderIds.length,
+      },
+    };
+  }
+
   async sync({ tenantId, userId, options = {} }) {
     if (options.fixtures) return options.fixtures.map((item) => driveFixtureToDocument({ tenantId, userId, item }));
     if (!this.isConfigured()) throw new Error('Google Drive connector is not configured');

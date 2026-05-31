@@ -55,6 +55,15 @@ export async function createApp(config) {
     res.json({ success: true, connectors: registry.list() });
   });
 
+  app.get('/v1/connectors/readiness', async (req, res) => {
+    try {
+      const checks = await registry.readiness(req.query.source || '');
+      res.json({ success: true, checks });
+    } catch (error) {
+      res.status(400).json({ success: false, error: error.message });
+    }
+  });
+
   app.post('/v1/sync/:source', async (req, res) => {
     const { tenantId, userId, options = {}, wait = false } = req.body || {};
     if (!tenantId || !userId) {

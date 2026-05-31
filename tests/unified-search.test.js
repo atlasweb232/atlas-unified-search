@@ -104,6 +104,11 @@ test('unified search indexes fixture documents across all connector types', asyn
     assert.equal(health.index.bySource.google_drive, 1);
     assert.equal(health.index.bySource.email, 1);
 
+    const readiness = await fetch(`${base}/v1/connectors/readiness`).then((response) => response.json());
+    assert.equal(readiness.success, true);
+    assert.ok(readiness.checks.some((check) => check.source === 'slack' && check.status === 'missing_configuration'));
+    assert.ok(readiness.checks.find((check) => check.source === 'slack').requirements.some((requirement) => requirement.name === 'SLACK_BOT_TOKEN'));
+
     const run = await post(base, '/v1/search-runs', {
       tenantId,
       userId,

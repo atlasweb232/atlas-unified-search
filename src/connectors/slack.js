@@ -14,6 +14,32 @@ export class SlackConnector {
     return Boolean(this.config.botToken && this.config.channelIds.length);
   }
 
+  requirements() {
+    return [
+      { name: 'SLACK_BOT_TOKEN', configured: Boolean(this.config.botToken) },
+      { name: 'SLACK_CHANNEL_IDS', configured: Boolean(this.config.channelIds.length) },
+    ];
+  }
+
+  async checkReadiness() {
+    const auth = await this.call('auth.test', {});
+    const channelChecks = [];
+    for (const channelId of this.config.channelIds.slice(0, 5)) {
+      const channel = await this.call('conversations.info', { channel: channelId });
+      channelChecks.push({ channelId, name: channel.channel?.name || channelId, accessible: true });
+    }
+    return {
+      ready: true,
+      status: 'ok',
+      details: {
+        team: auth.team,
+        botUserId: auth.user_id,
+        checkedChannels: channelChecks,
+        configuredChannelCount: this.config.channelIds.length,
+      },
+    };
+  }
+
   async sync({ tenantId, userId, options = {} }) {
     if (options.fixtures) return options.fixtures.map((item) => slackFixtureToDocument({ tenantId, userId, item }));
     if (!this.isConfigured()) throw new Error('Slack connector is not configured');

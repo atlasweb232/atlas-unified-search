@@ -12,6 +12,60 @@ export class EmailConnector {
     return Boolean((this.config.baseUrl && this.config.sessionId) || this.config.searchUrl);
   }
 
+  requirements() {
+    return [
+      { name: 'EMAIL_VECTOR_SEARCH_URL', configured: Boolean(this.config.searchUrl), recommended: true },
+      { name: 'EMAIL_CONNECTOR_API_TOKEN', configured: Boolean(this.config.apiToken), recommended: true },
+      { name: 'EMAIL_CONNECTOR_BASE_URL', configured: Boolean(this.config.baseUrl), alternativeGroup: 'legacy_fetch' },
+      { name: 'EMAIL_CONNECTOR_SESSION_ID', configured: Boolean(this.config.sessionId), alternativeGroup: 'legacy_fetch' },
+    ];
+  }
+
+  async checkReadiness() {
+    if (this.config.searchUrl) {
+      const response = await fetch(this.config.searchUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.config.apiToken ? { Authorization: `Bearer ${this.config.apiToken}` } : {}),
+        },
+        body: JSON.stringify({
+          tenantId: 'readiness',
+          userId: 'readiness',
+          userEmail: this.config.readinessUserEmail || 'readiness@atlasweb.info',
+          query: 'readiness',
+          sources: ['email'],
+          filters: { limit: 1 },
+          size: 1,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      const message = data.error || data.message || '';
+      if (response.status === 500 && /Collection .*doesn'?t exist|not found/i.test(message)) {
+        return {
+          ready: true,
+          status: 'ok_no_readiness_collection',
+          details: {
+            statusCode: response.status,
+            message: 'Endpoint contract is valid; readiness probe user has no indexed email collection.',
+          },
+        };
+      }
+      if (!response.ok && response.status !== 404) {
+        return { ready: false, status: `http_${response.status}`, details: { message: message || 'Email vector search rejected readiness probe' } };
+      }
+      return {
+        ready: response.ok,
+        status: response.ok ? 'ok' : 'endpoint_reachable_contract_unconfirmed',
+        details: {
+          statusCode: response.status,
+          resultCount: Array.isArray(data.results) ? data.results.length : Array.isArray(data.data?.results) ? data.data.results.length : undefined,
+        },
+      };
+    }
+    return { ready: true, status: 'legacy_fetch_configured', details: { baseUrlConfigured: Boolean(this.config.baseUrl) } };
+  }
+
   async search({ tenantId, userId, query, filters = {}, limit = 10 }) {
     if (!this.config.searchUrl) return null;
     const response = await fetch(this.config.searchUrl, {
@@ -20,11 +74,19 @@ export class EmailConnector {
         'Content-Type': 'application/json',
         ...(this.config.apiToken ? { Authorization: `Bearer ${this.config.apiToken}` } : {}),
       },
-      body: JSON.stringify({ tenantId, userId, query, filters, limit }),
+      body: JSON.stringify({
+        tenantId,
+        userId,
+        userEmail: userId,
+        query,
+        filters: normalizeEmailFilters(filters, limit),
+        size: limit,
+      }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || data.success === false) throw new Error(data.error || data.message || 'Federated email search failed');
-    return (data.results || data.items || []).map((item) => ({
+    const results = data.results || data.items || data.data?.results || [];
+    return results.map((item) => ({
       id: item.id || item.documentId || item.messageId,
       source: SOURCES.email,
       title: item.title || item.subject || '(no subject)',
@@ -52,6 +114,16 @@ export class EmailConnector {
     const emails = data.emails || data.messages || [];
     return emails.map((email) => emailMessageToDocument({ tenantId, userId, email }));
   }
+}
+
+function normalizeEmailFilters(filters = {}, limit = 10) {
+  return {
+    ...filters,
+    limit,
+    sender_email: filters.sender_email || filters.sender || undefined,
+    date_from: filters.date_from || filters.from || undefined,
+    date_to: filters.date_to || filters.to || undefined,
+  };
 }
 
 function emailFixtureToDocument({ tenantId, userId, item }) {

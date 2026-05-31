@@ -36,6 +36,14 @@ const unauth = await request('/v1/connectors', { auth: false });
 assert(unauth.status === 401, `expected unauthenticated connectors to return 401, got ${unauth.status}`);
 console.log('auth boundary ok');
 
+const readiness = await request('/v1/connectors/readiness');
+assert(readiness.ok, `readiness failed: ${JSON.stringify(readiness.data)}`);
+console.log('connector readiness', readiness.data.checks.map((check) => ({
+  source: check.source,
+  ready: check.ready,
+  status: check.status,
+})));
+
 const wait = mode !== 'async';
 const sync = await request('/v1/sync/slack', {
   method: 'POST',

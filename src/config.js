@@ -57,6 +57,7 @@ export function loadConfig() {
       baseUrl: process.env.EMAIL_CONNECTOR_BASE_URL || '',
       searchUrl: process.env.EMAIL_VECTOR_SEARCH_URL || '',
       apiToken: process.env.EMAIL_CONNECTOR_API_TOKEN || '',
+      readinessUserEmail: process.env.EMAIL_READINESS_USER_EMAIL || '',
       sessionId: process.env.EMAIL_CONNECTOR_SESSION_ID || '',
       limit: number('EMAIL_CONNECTOR_LIMIT', 50),
     },

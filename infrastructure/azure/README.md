@@ -43,6 +43,7 @@ export GOOGLE_CLIENT_SECRET='<secret>'
 export GOOGLE_REFRESH_TOKEN='<refresh-token>'
 export EMAIL_VECTOR_SEARCH_URL='<existing-email-vector-search-url>'
 export EMAIL_CONNECTOR_API_TOKEN='<email-backend-token>'
+export EMAIL_READINESS_USER_EMAIL='<indexed-test-email-address>'
 
 ./infrastructure/azure/deploy-containerapp.sh
 ```
@@ -60,6 +61,7 @@ BASE='https://atlas-unified-search.proudfield-a201b3fd.eastus.azurecontainerapps
 curl -s "$BASE/v1/health" | jq
 curl -i "$BASE/v1/connectors"
 curl -s "$BASE/v1/connectors" -H "Authorization: Bearer $UNIFIED_SEARCH_AUTH_TOKEN" | jq
+curl -s "$BASE/v1/connectors/readiness" -H "Authorization: Bearer $UNIFIED_SEARCH_AUTH_TOKEN" | jq
 ```
 
 Repeatable production smoke tests:
