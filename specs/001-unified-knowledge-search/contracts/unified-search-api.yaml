@@ -1,0 +1,122 @@
+openapi: 3.1.0
+info:
+  title: Atlas Unified Search API
+  version: 0.1.0
+paths:
+  /v1/search:
+    post:
+      summary: Search across connected sources
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+  /v1/sync/{source}:
+    post:
+      summary: Start a source sync
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [slack, google_drive, conference_blob, email]
+      responses:
+        "202":
+          description: Sync accepted
+  /v1/documents/{documentId}:
+    get:
+      summary: Get expandable document details
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Document detail
+components:
+  schemas:
+    SearchRequest:
+      type: object
+      required: [tenantId, userId, query]
+      properties:
+        tenantId:
+          type: string
+        userId:
+          type: string
+        query:
+          type: string
+        sources:
+          type: array
+          items:
+            type: string
+            enum: [slack, google_drive, conference_blob, email]
+        filters:
+          type: object
+          properties:
+            containers:
+              type: array
+              items:
+                type: string
+            authors:
+              type: array
+              items:
+                type: string
+            from:
+              type: string
+              format: date-time
+            to:
+              type: string
+              format: date-time
+        limit:
+          type: integer
+          default: 10
+    SearchResponse:
+      type: object
+      required: [success, results]
+      properties:
+        success:
+          type: boolean
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+    SearchResult:
+      type: object
+      required: [id, source, title, oneLine, score]
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        title:
+          type: string
+        oneLine:
+          type: string
+        author:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        container:
+          type: string
+        score:
+          type: number
+        sourceUri:
+          type: string
+        children:
+          type: array
+          items:
+            type: object
+        metadata:
+          type: object

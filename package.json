@@ -1,0 +1,10 @@
+{
+  "name": "atlas-unified-search",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/check-specs.mjs",
+    "lint": "node scripts/check-specs.mjs"
+  }
+}
