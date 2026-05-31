@@ -9,6 +9,7 @@
     "dev:web": "vite --host 0.0.0.0 --port 4421 frontend",
     "start": "node src/server.js",
     "start:worker": "node src/worker.js",
+    "start:scheduler": "node src/scheduler.js",
     "build": "vite build frontend",
     "db:migrate": "node scripts/migrate-postgres.mjs",
     "audit:production-config": "node scripts/audit-production-config.mjs",

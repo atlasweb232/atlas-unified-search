@@ -63,6 +63,47 @@ Deploy the background sync worker from the same image:
 ./infrastructure/azure/deploy-worker-containerapp.sh
 ```
 
+Optional scheduled sync process:
+
+```bash
+export UNIFIED_SEARCH_SYNC_SCHEDULES='[
+  {
+    "name": "atlasweb-email-hourly",
+    "source": "email",
+    "tenantId": "atlasweb",
+    "userId": "rakib.mahmood@tridentinter.io",
+    "everySeconds": 3600,
+    "runOnStart": false,
+    "options": { "limit": 50 }
+  },
+  {
+    "name": "atlasweb-knowledge-nightly",
+    "source": "knowledge_base",
+    "tenantId": "atlasweb",
+    "userId": "shared",
+    "everySeconds": 86400,
+    "reindex": true
+  }
+]'
+node src/scheduler.js
+```
+
+For Azure, run the scheduler as a separate single-replica Container App or
+scheduled job from the same image with command `node src/scheduler.js`. Keep
+`minReplicas=1` and `maxReplicas=1` for a continuously running scheduler so
+duplicate schedulers do not enqueue the same sync. The worker can still scale
+out because actual indexing work is queue-backed.
+
+Set `UNIFIED_SEARCH_SCHEDULER_REQUIRED=true` only when scheduled sync is a
+production gate. Leave it unset for manual-only connector testing.
+
+Deploy the scheduler Container App when schedules are ready:
+
+```bash
+chmod +x infrastructure/azure/deploy-scheduler-containerapp.sh
+./infrastructure/azure/deploy-scheduler-containerapp.sh
+```
+
 Production verification:
 
 ```bash

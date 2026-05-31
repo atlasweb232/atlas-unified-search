@@ -10,6 +10,7 @@ import { createEmbedder } from './embedding.js';
 import { JobRunner } from './jobRunner.js';
 import { requireApiAuth } from './middleware/auth.js';
 import { createJobQueue } from './queue/serviceBusQueue.js';
+import { parseSyncSchedules, summarizeSchedules } from './scheduleConfig.js';
 import { SearchRunCoordinator } from './searchRun.js';
 import { createSearchStore } from './stores/postgresStore.js';
 import { SearchEngine } from './store.js';
@@ -45,6 +46,7 @@ export async function createApp(config) {
       index: store.status(),
       auth: { required: Boolean(config.auth?.required) },
       queue: { backend: queue.name },
+      schedules: scheduleStatus(config),
       artifacts: { backend: assistant.artifactProvider.name, configured: assistant.artifactProvider.configured() },
       connectors: registry.list(),
     });
@@ -319,6 +321,7 @@ function productionReadinessReport({ config, store, queue, assistant, connectorC
     index: { ready: store.status().backend === 'postgres-pgvector', detail: store.status().backend },
     queue: { ready: queue.name === 'azure-service-bus', detail: queue.name },
     artifacts: { ready: assistant.artifactProvider.name === 'azure-blob-artifact' && assistant.artifactProvider.configured(), detail: assistant.artifactProvider.name },
+    scheduler: scheduleStatus(config),
   };
   const liveSources = ['email', 'conference_bridge', 'knowledge_base']
     .map((source) => ({ source, ready: Boolean(checksBySource[source]?.ready), status: checksBySource[source]?.status || 'not_reported' }));
@@ -368,6 +371,25 @@ function productionReadinessReport({ config, store, queue, assistant, connectorC
       ...(futureSources.some((item) => item.source === 'data_fabric' && !item.ready) ? ['Define and configure the Data Fabric API contract before claiming live Data Fabric readiness.'] : []),
     ],
   };
+}
+
+function scheduleStatus(config) {
+  try {
+    const schedules = parseSyncSchedules(config.syncSchedulesRaw || '');
+    return {
+      ready: schedules.length > 0 || !config.schedulerRequired,
+      detail: schedules.length ? 'configured' : 'not_configured_manual_only',
+      required: Boolean(config.schedulerRequired),
+      schedules: summarizeSchedules(schedules),
+    };
+  } catch (error) {
+    return {
+      ready: false,
+      detail: 'invalid_configuration',
+      error: error.message,
+      schedules: [],
+    };
+  }
 }
 
 function connectorSetupGuide(checks) {

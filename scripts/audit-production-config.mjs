@@ -3,13 +3,16 @@ import { execFileSync } from 'node:child_process';
 const resourceGroup = process.env.RESOURCE_GROUP || 'atlas-azure-backend-rg';
 const apiApp = process.env.APP_NAME || 'atlas-unified-search';
 const workerApp = process.env.WORKER_APP_NAME || 'atlas-unified-search-worker';
+const schedulerApp = process.env.SCHEDULER_APP_NAME || 'atlas-unified-search-scheduler';
 const baseUrl = process.env.UNIFIED_SEARCH_BASE_URL || '';
 const token = process.env.UNIFIED_SEARCH_AUTH_TOKEN || '';
 
 const api = loadContainerApp(apiApp);
 const worker = loadContainerApp(workerApp);
+const scheduler = loadContainerApp(schedulerApp, { optional: true });
 const apiEnv = envMap(api);
 const workerEnv = envMap(worker);
+const schedulerEnv = scheduler ? envMap(scheduler) : {};
 
 const report = {
   generatedAt: new Date().toISOString(),
@@ -17,6 +20,7 @@ const report = {
   apps: {
     api: summarizeApp(api, apiEnv),
     worker: summarizeApp(worker, workerEnv),
+    scheduler: scheduler ? summarizeApp(scheduler, schedulerEnv) : { name: schedulerApp, present: false },
   },
   gates: {
     infrastructure: [
@@ -27,6 +31,19 @@ const report = {
       envGate(apiEnv, 'ARTIFACT_STORAGE_CONNECTION_STRING', 'secretRef'),
       envGate(workerEnv, 'POSTGRES_CONNECTION_STRING', 'secretRef', 'worker'),
       envGate(workerEnv, 'SERVICE_BUS_CONNECTION_STRING', 'secretRef', 'worker'),
+    ],
+    scheduler: [
+      {
+        name: 'scheduler_app',
+        present: Boolean(scheduler),
+        satisfied: Boolean(scheduler) || !truthyEnv(apiEnv, 'UNIFIED_SEARCH_SCHEDULER_REQUIRED'),
+        kind: scheduler ? 'containerApp' : 'missing',
+      },
+      ...(scheduler ? [
+        envGate(schedulerEnv, 'UNIFIED_SEARCH_SYNC_SCHEDULES', 'secretRef', 'scheduler'),
+        envGate(schedulerEnv, 'POSTGRES_CONNECTION_STRING', 'secretRef', 'scheduler'),
+        envGate(schedulerEnv, 'SERVICE_BUS_CONNECTION_STRING', 'secretRef', 'scheduler'),
+      ] : []),
     ],
     liveConnectors: [
       groupGate('email', [
@@ -98,22 +115,28 @@ report.summary = {
     .map((gate) => gate.name),
   productionReadinessEndpointReady: Boolean(report.runtime?.productionReadiness?.readyForProductionTesting),
   productionComplete: Boolean(report.runtime?.productionReadiness?.productionComplete),
+  schedulerReady: report.gates.scheduler.every((gate) => gate.satisfied),
 };
 
 console.log(JSON.stringify(redact(report), null, 2));
 
-function loadContainerApp(name) {
-  const raw = execFileSync('az', [
-    'containerapp',
-    'show',
-    '--resource-group',
-    resourceGroup,
-    '--name',
-    name,
-    '-o',
-    'json',
-  ], { encoding: 'utf8' });
-  return JSON.parse(raw);
+function loadContainerApp(name, { optional = false } = {}) {
+  try {
+    const raw = execFileSync('az', [
+      'containerapp',
+      'show',
+      '--resource-group',
+      resourceGroup,
+      '--name',
+      name,
+      '-o',
+      'json',
+    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', optional ? 'ignore' : 'inherit'] });
+    return JSON.parse(raw);
+  } catch (error) {
+    if (optional) return null;
+    throw error;
+  }
 }
 
 function envMap(app) {
@@ -129,6 +152,10 @@ function summarizeApp(app, env) {
     fqdn: app.properties?.configuration?.ingress?.fqdn || '',
     envNames: Object.keys(env).sort(),
   };
+}
+
+function truthyEnv(env, name) {
+  return ['1', 'true', 'yes'].includes(String(env[name]?.value || '').toLowerCase());
 }
 
 function envGate(env, name, expectedKind, app = 'api', optional = false) {

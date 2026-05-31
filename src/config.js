@@ -52,6 +52,8 @@ export function loadConfig() {
       token: authToken,
     },
     sourcePermissions: json('UNIFIED_SEARCH_SOURCE_PERMISSIONS', {}),
+    syncSchedulesRaw: process.env.UNIFIED_SEARCH_SYNC_SCHEDULES || '',
+    schedulerRequired: ['1', 'true', 'yes'].includes(String(process.env.UNIFIED_SEARCH_SCHEDULER_REQUIRED || '').toLowerCase()),
     postgres: {
       connectionString: process.env.POSTGRES_CONNECTION_STRING || '',
       ssl: !['0', 'false', 'no'].includes(String(process.env.POSTGRES_SSL || 'true').toLowerCase()),

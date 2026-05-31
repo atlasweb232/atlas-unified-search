@@ -38,6 +38,8 @@ test('api auth boundary blocks protected endpoints when enabled', async () => {
     const health = await fetch(`${base}/v1/health`).then((response) => response.json());
     assert.equal(health.success, true);
     assert.equal(health.auth.required, true);
+    assert.equal(health.schedules.ready, true);
+    assert.equal(health.schedules.detail, 'not_configured_manual_only');
 
     const unauthorized = await fetch(`${base}/v1/connectors`);
     assert.equal(unauthorized.status, 401);
