@@ -19,6 +19,19 @@ export class JsonSearchStore {
     this.dataDir = dataDir;
     this.filePath = path.join(dataDir, 'unified-search.json');
     this.state = structuredClone(EMPTY_STATE);
+    this.lock = Promise.resolve();
+  }
+
+  async withStoreLock(callback) {
+    const previous = this.lock;
+    let release;
+    this.lock = new Promise((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await callback();
+    } finally {
+      release();
+    }
   }
 
   async load() {

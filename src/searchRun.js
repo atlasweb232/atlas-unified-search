@@ -9,9 +9,15 @@ export class SearchRunCoordinator {
 
   async start({ tenantId, userId, query, sources, filters = {}, limit = 10, wait = false }) {
     const selectedSources = sources?.length ? sources : defaultSources(this.store, tenantId, userId);
-    const run = this.store.createSearchRun({ tenantId, userId, query, selectedSources, filters });
-    this.store.audit({ eventType: 'search_run_start', tenantId, userId, queryHash: hashQuery(query), metadata: { runId: run.id, selectedSources } });
-    await this.store.save();
+    const createRun = async () => {
+      const run = this.store.createSearchRun({ tenantId, userId, query, selectedSources, filters });
+      this.store.audit({ eventType: 'search_run_start', tenantId, userId, queryHash: hashQuery(query), metadata: { runId: run.id, selectedSources } });
+      await this.store.save();
+      return run;
+    };
+    const run = typeof this.store.withStoreLock === 'function'
+      ? await this.store.withStoreLock(createRun)
+      : await createRun();
     const promise = this.execute(run.id, { tenantId, userId, query, selectedSources, filters, limit });
     if (wait) await promise;
     return this.store.getSearchRun(run.id);
@@ -40,11 +46,18 @@ export class SearchRunCoordinator {
       }
     }
     const deduped = dedupe(results).sort((left, right) => right.score - left.score).slice(0, limit);
-    const failed = this.store.getSearchRun(runId).sourceStatuses.some((status) => status.status === 'failed');
-    this.store.updateSearchRun(runId, { status: failed ? 'partial' : 'completed', results: deduped, completedAt: new Date().toISOString() });
-    this.store.audit({ eventType: 'search_run_complete', tenantId, userId, metadata: { runId, resultCount: deduped.length, failed } });
-    await this.store.save();
-    return this.store.getSearchRun(runId);
+    const completeRun = async () => {
+      const currentRun = this.store.getSearchRun(runId);
+      if (!currentRun) throw new Error(`Search run ${runId} was not found while completing`);
+      const failed = currentRun.sourceStatuses.some((status) => status.status === 'failed');
+      this.store.updateSearchRun(runId, { status: failed ? 'partial' : 'completed', results: deduped, completedAt: new Date().toISOString() });
+      this.store.audit({ eventType: 'search_run_complete', tenantId, userId, metadata: { runId, resultCount: deduped.length, failed } });
+      await this.store.save();
+      return this.store.getSearchRun(runId);
+    };
+    return typeof this.store.withStoreLock === 'function'
+      ? this.store.withStoreLock(completeRun)
+      : completeRun();
   }
 }
 

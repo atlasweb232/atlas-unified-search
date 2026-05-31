@@ -257,7 +257,12 @@ export async function createApp(config) {
 }
 
 async function refreshStore(store) {
-  if (typeof store.refresh === 'function') await store.refresh();
+  if (typeof store.refresh !== 'function') return;
+  if (typeof store.withStoreLock === 'function') {
+    await store.withStoreLock(() => store.refresh());
+    return;
+  }
+  await store.refresh();
 }
 
 function matchesScope(req, row) {
