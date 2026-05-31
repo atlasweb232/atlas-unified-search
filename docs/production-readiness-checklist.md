@@ -15,6 +15,7 @@ The unified search service is production-testable when these gates are true:
 - Slack app is installed in the workspace with bot scopes listed in `docs/slack-gdrive-onboarding.md`.
 - Google OAuth consent and refresh token are configured for Drive read access.
 - Email results use `EMAIL_VECTOR_SEARCH_URL` to federate against the existing Atlas email vector service.
+- Email production smoke verifies the federated email source-agent path; set `UNIFIED_SEARCH_SMOKE_REQUIRE_EMAIL_RESULTS=true` with a known indexed test email before claiming email corpus content coverage.
 - Conference bridge transcripts use `AZURE_STORAGE_CONNECTION_STRING` and `CONFERENCE_BLOB_CONTAINERS`; when configured, production smoke reindexes and searches a scoped Blob prefix.
 - Knowledge base uses `KNOWLEDGE_BASE_ROOT`; the deployed image can use `/app/docs` for production smoke coverage.
 - Tenant/user IDs are supplied on every sync, search, search-run, document, and assistant action request.

@@ -23,6 +23,7 @@ export class EmailConnector {
 
   async checkReadiness() {
     if (this.config.searchUrl) {
+      const readinessUserEmail = this.config.readinessUserEmail || 'readiness@atlasweb.info';
       const response = await fetch(this.config.searchUrl, {
         method: 'POST',
         headers: {
@@ -32,7 +33,7 @@ export class EmailConnector {
         body: JSON.stringify({
           tenantId: 'readiness',
           userId: 'readiness',
-          userEmail: this.config.readinessUserEmail || 'readiness@atlasweb.info',
+          userEmail: readinessUserEmail,
           query: 'readiness',
           sources: ['email'],
           filters: { limit: 1 },
@@ -47,6 +48,7 @@ export class EmailConnector {
           status: 'ok_no_readiness_collection',
           details: {
             statusCode: response.status,
+            readinessUserEmail,
             message: 'Endpoint contract is valid; readiness probe user has no indexed email collection.',
           },
         };
@@ -59,6 +61,7 @@ export class EmailConnector {
         status: response.ok ? 'ok' : 'endpoint_reachable_contract_unconfirmed',
         details: {
           statusCode: response.status,
+          readinessUserEmail,
           resultCount: Array.isArray(data.results) ? data.results.length : Array.isArray(data.data?.results) ? data.data.results.length : undefined,
         },
       };

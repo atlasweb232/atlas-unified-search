@@ -202,12 +202,19 @@ export UNIFIED_SEARCH_SMOKE_GDRIVE_FOLDER_IDS='folder-id-with-smoke-doc'
 export UNIFIED_SEARCH_SMOKE_GDRIVE_QUERY='known phrase in smoke Drive doc'
 export UNIFIED_SEARCH_SMOKE_DATA_FABRIC_DATASET='smoke'
 export UNIFIED_SEARCH_SMOKE_DATA_FABRIC_QUERY='known smoke record phrase'
+export UNIFIED_SEARCH_SMOKE_EMAIL_USER_ID='indexed-user@example.com'
+export UNIFIED_SEARCH_SMOKE_EMAIL_QUERY='known phrase in indexed smoke email'
+export UNIFIED_SEARCH_SMOKE_REQUIRE_EMAIL_RESULTS=true
 UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production
 ```
 
 If a live connector is configured but indexes zero documents, the smoke test
 fails. That usually means the bot/service account can authenticate but cannot
 read the configured channel, folder, or dataset.
+
+Email live smoke always verifies that the federated email source-agent
+completes. Set `UNIFIED_SEARCH_SMOKE_REQUIRE_EMAIL_RESULTS=true` when a known
+indexed smoke email exists and zero results should fail the run.
 
 If `conference_bridge` readiness is `ready:true`, `smoke:production` also runs
 a live Blob transcript reindex/search using

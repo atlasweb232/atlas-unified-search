@@ -7,6 +7,9 @@ const jobPollAttempts = Number(process.env.UNIFIED_SEARCH_SMOKE_JOB_POLL_ATTEMPT
 const jobPollIntervalMs = Number(process.env.UNIFIED_SEARCH_SMOKE_JOB_POLL_INTERVAL_MS || 5000);
 const marker = `unified search ${mode} smoke ${Date.now()}`;
 const liveLimit = Number(process.env.UNIFIED_SEARCH_SMOKE_LIVE_LIMIT || 5);
+const configuredEmailSmokeUserId = process.env.UNIFIED_SEARCH_SMOKE_EMAIL_USER_ID || process.env.EMAIL_READINESS_USER_EMAIL || '';
+const emailSmokeQuery = process.env.UNIFIED_SEARCH_SMOKE_EMAIL_QUERY || 'readiness';
+const requireEmailResults = truthy(process.env.UNIFIED_SEARCH_SMOKE_REQUIRE_EMAIL_RESULTS || '');
 
 async function request(path, options = {}) {
   const response = await fetch(`${base}${path}`, {
@@ -150,6 +153,39 @@ if (readinessBySource.data_fabric?.ready) {
   console.log('data fabric live source skipped', { status: readinessBySource.data_fabric?.status || 'not_reported' });
 }
 
+if (readinessBySource.email?.ready) {
+  const emailSmokeUserId = configuredEmailSmokeUserId || readinessBySource.email?.details?.readinessUserEmail || '';
+  if (!emailSmokeUserId) {
+    console.log('email federated live search skipped', { reason: 'no smoke email user configured or reported by readiness' });
+  } else {
+    const emailSearch = await request('/v1/search-runs', {
+      method: 'POST',
+      body: JSON.stringify({
+        tenantId,
+        userId: emailSmokeUserId,
+        query: emailSmokeQuery,
+        sources: ['email'],
+        wait: true,
+        limit: liveLimit,
+      }),
+    });
+    assert(emailSearch.ok, `email federated search failed: ${JSON.stringify(emailSearch.data)}`);
+    const emailStatus = emailSearch.data.searchRun?.sourceStatuses?.find((item) => item.source === 'email');
+    assert(emailStatus?.status === 'completed', `email source-agent did not complete: ${JSON.stringify(emailSearch.data.searchRun?.sourceStatuses)}`);
+    if (requireEmailResults) {
+      assert(emailSearch.data.results?.length, `email live search returned no results for ${emailSmokeUserId}; index a known smoke email or set UNIFIED_SEARCH_SMOKE_EMAIL_QUERY`);
+    }
+    console.log('email federated live search ok', {
+      userId: emailSmokeUserId,
+      query: emailSmokeQuery,
+      count: emailSearch.data.results?.length || 0,
+      requireResults: requireEmailResults,
+    });
+  }
+} else {
+  console.log('email live source skipped', { status: readinessBySource.email?.status || 'not_reported' });
+}
+
 if (readinessBySource.conference_bridge?.ready) {
   const conferenceTenantId = `${tenantId}_conference`;
   const conferenceUserId = `${userId}_conference`;
@@ -286,6 +322,10 @@ function listEnv(name) {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function truthy(value) {
+  return ['1', 'true', 'yes'].includes(String(value || '').toLowerCase());
 }
 
 function summarizeHealth(data) {

@@ -320,6 +320,71 @@ test('data fabric connector syncs live HTTP records', async () => {
   }
 });
 
+test('email connector readiness exposes smoke user and federated search completes', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-email-'));
+  let emailServer;
+  let appServer;
+  try {
+    const requests = [];
+    emailServer = await listen((req, res) => {
+      assert.equal(req.method, 'POST');
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        const payload = JSON.parse(body || '{}');
+        requests.push(payload);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({
+          success: true,
+          results: payload.userEmail === 'indexed@atlasweb.info' ? [{
+            id: 'email-smoke-1',
+            subject: 'Readiness smoke email',
+            sender: 'support@atlasweb.info',
+            preview: 'Readiness smoke confirms federated email search.',
+            receivedAt: '2026-05-31T15:00:00.000Z',
+          }] : [],
+        }));
+      });
+    });
+
+    const app = await createApp({
+      ...config(dir),
+      email: {
+        baseUrl: '',
+        searchUrl: `http://127.0.0.1:${emailServer.address().port}/search`,
+        apiToken: 'email-token',
+        readinessUserEmail: 'indexed@atlasweb.info',
+        sessionId: '',
+        limit: 10,
+      },
+    });
+    appServer = app.listen(0);
+    await new Promise((resolve) => appServer.once('listening', resolve));
+    const base = `http://127.0.0.1:${appServer.address().port}`;
+
+    const readiness = await fetch(`${base}/v1/connectors/readiness?source=email`).then((response) => response.json());
+    assert.equal(readiness.checks[0].ready, true);
+    assert.equal(readiness.checks[0].details.readinessUserEmail, 'indexed@atlasweb.info');
+
+    const run = await post(base, '/v1/search-runs', {
+      tenantId: 'atlasweb',
+      userId: 'indexed@atlasweb.info',
+      query: 'readiness',
+      sources: ['email'],
+      wait: true,
+      limit: 5,
+    });
+    assert.equal(run.searchRun.sourceStatuses[0].status, 'completed');
+    assert.equal(run.results[0].source, 'email');
+    assert.ok(requests.some((payload) => payload.userEmail === 'indexed@atlasweb.info'));
+  } finally {
+    if (appServer) await new Promise((resolve) => appServer.close(resolve));
+    if (emailServer) await new Promise((resolve) => emailServer.close(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
 function listen(handler) {
   return new Promise((resolve) => {
     const server = createServer(handler);
