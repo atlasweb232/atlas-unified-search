@@ -14,29 +14,57 @@ chmod +x infrastructure/azure/deploy-containerapp.sh
 ./infrastructure/azure/deploy-containerapp.sh
 ```
 
-Production secrets should be set after creation:
+Production mode requires Postgres + pgvector, Service Bus, Blob artifacts, source
+credentials, and an API bearer token. Run the database migration before sending
+production traffic:
 
 ```bash
-az containerapp secret set \
-  --resource-group atlas-azure-backend-rg \
-  --name atlas-unified-search \
-  --secrets \
-    slack-bot-token='<xoxb-token>' \
-    google-client-id='<id>' \
-    google-client-secret='<secret>' \
-    google-refresh-token='<token>' \
-    openai-api-key='<key>'
-
-az containerapp update \
-  --resource-group atlas-azure-backend-rg \
-  --name atlas-unified-search \
-  --set-env-vars \
-    SLACK_BOT_TOKEN=secretref:slack-bot-token \
-    GOOGLE_CLIENT_ID=secretref:google-client-id \
-    GOOGLE_CLIENT_SECRET=secretref:google-client-secret \
-    GOOGLE_REFRESH_TOKEN=secretref:google-refresh-token \
-    OPENAI_API_KEY=secretref:openai-api-key
+export POSTGRES_CONNECTION_STRING='<postgres-ssl-connection-string>'
+npm run db:migrate
 ```
 
-For production-grade vector storage, replace the current JSON store with
-Postgres + pgvector before using this for real customer data.
+Deploy the API with production secret refs by exporting the values locally before
+running the script. The script stores these values as Container App secrets and
+only wires secret references into the app:
+
+```bash
+export UNIFIED_SEARCH_AUTH_TOKEN='<random-shared-api-token>'
+export UNIFIED_SEARCH_REQUIRE_AUTH=true
+export POSTGRES_CONNECTION_STRING='<postgres-ssl-connection-string>'
+export SERVICE_BUS_CONNECTION_STRING='<service-bus-connection-string>'
+export SERVICE_BUS_SYNC_QUEUE_NAME='unified-search-sync'
+export ARTIFACT_STORAGE_CONNECTION_STRING='<storage-connection-string>'
+export ARTIFACT_BLOB_CONTAINER='unified-search-artifacts'
+export EMBEDDING_PROVIDER='openai'
+export OPENAI_API_KEY='<openai-or-azure-openai-compatible-key>'
+export SLACK_BOT_TOKEN='<xoxb-token>'
+export GOOGLE_CLIENT_ID='<id>'
+export GOOGLE_CLIENT_SECRET='<secret>'
+export GOOGLE_REFRESH_TOKEN='<refresh-token>'
+export EMAIL_VECTOR_SEARCH_URL='<existing-email-vector-search-url>'
+export EMAIL_CONNECTOR_API_TOKEN='<email-backend-token>'
+
+./infrastructure/azure/deploy-containerapp.sh
+```
+
+Deploy the background sync worker from the same image:
+
+```bash
+./infrastructure/azure/deploy-worker-containerapp.sh
+```
+
+Production verification:
+
+```bash
+BASE='https://atlas-unified-search.proudfield-a201b3fd.eastus.azurecontainerapps.io'
+curl -s "$BASE/v1/health" | jq
+curl -i "$BASE/v1/connectors"
+curl -s "$BASE/v1/connectors" -H "Authorization: Bearer $UNIFIED_SEARCH_AUTH_TOKEN" | jq
+```
+
+Expected production health:
+
+- `index.backend` is `postgres-pgvector`
+- `queue.backend` is `azure-service-bus`
+- `artifacts.backend` is `azure-blob-artifact`
+- `auth.required` is `true`

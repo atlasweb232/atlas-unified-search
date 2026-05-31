@@ -1,15 +1,20 @@
 import { runConnectorSync } from './connectors/base.js';
 
 export class JobRunner {
-  constructor({ registry, store, searchEngine }) {
+  constructor({ registry, store, searchEngine, queue }) {
     this.registry = registry;
     this.store = store;
     this.searchEngine = searchEngine;
+    this.queue = queue;
   }
 
   async enqueue({ source, tenantId, userId, options = {}, autoStart = true }) {
     const job = this.store.createJob({ source, tenantId, userId });
     await this.store.save();
+    if (autoStart && this.queue?.name !== 'inline') {
+      await this.queue.enqueue({ jobId: job.id, source, tenantId, userId, options });
+      return job;
+    }
     if (autoStart) {
       setTimeout(() => {
         this.run(job.id, { source, tenantId, userId, options }).catch(() => {});

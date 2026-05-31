@@ -167,6 +167,7 @@ export class JsonSearchStore {
     const documents = this.listDocuments();
     const chunks = this.listChunks();
     return {
+      backend: 'json',
       documents: documents.length,
       chunks: chunks.length,
       jobs: Object.keys(this.state.jobs).length,

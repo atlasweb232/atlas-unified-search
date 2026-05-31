@@ -8,28 +8,33 @@ import { createChatProvider } from './assistant/providers.js';
 import { createConnectorRegistry } from './connectors/index.js';
 import { createEmbedder } from './embedding.js';
 import { JobRunner } from './jobRunner.js';
+import { requireApiAuth } from './middleware/auth.js';
+import { createJobQueue } from './queue/serviceBusQueue.js';
 import { SearchRunCoordinator } from './searchRun.js';
-import { JsonSearchStore, SearchEngine } from './store.js';
+import { createSearchStore } from './stores/postgresStore.js';
+import { SearchEngine } from './store.js';
 
 export async function createApp(config) {
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: '4mb' }));
+  app.use(requireApiAuth(config));
 
-  const store = new JsonSearchStore({ dataDir: config.dataDir });
+  const store = await createSearchStore(config);
   await store.load();
   const embedder = await createEmbedder(config);
   const searchEngine = new SearchEngine({ store, embedder });
   const registry = createConnectorRegistry(config);
-  const jobs = new JobRunner({ registry, store, searchEngine });
-  const searchRuns = new SearchRunCoordinator({ store, searchEngine });
+  const queue = createJobQueue(config);
+  const jobs = new JobRunner({ registry, store, searchEngine, queue });
+  const searchRuns = new SearchRunCoordinator({ store, searchEngine, registry });
   const assistant = new AssistantActionService({
     store,
     chatProvider: createChatProvider(config),
-    artifactProvider: new LocalArtifactProvider({ dataDir: config.dataDir }),
+    artifactProvider: new LocalArtifactProvider({ dataDir: config.dataDir, azure: config.artifacts || {} }),
   });
 
-  app.locals.services = { store, searchEngine, registry, jobs, searchRuns, assistant };
+  app.locals.services = { store, searchEngine, registry, jobs, searchRuns, assistant, queue };
 
   app.get('/v1/health', (req, res) => {
     res.json({
@@ -37,6 +42,9 @@ export async function createApp(config) {
       service: 'atlas-unified-search',
       embedding: { model: embedder.model, version: embedder.version },
       index: store.status(),
+      auth: { required: Boolean(config.auth?.required) },
+      queue: { backend: queue.name },
+      artifacts: { backend: assistant.artifactProvider.name, configured: assistant.artifactProvider.configured() },
       connectors: registry.list(),
     });
   });

@@ -1,9 +1,10 @@
 import { sourceIcon, sourceLabel } from './model.js';
 
 export class SearchRunCoordinator {
-  constructor({ store, searchEngine }) {
+  constructor({ store, searchEngine, registry }) {
     this.store = store;
     this.searchEngine = searchEngine;
+    this.registry = registry;
   }
 
   async start({ tenantId, userId, query, sources, filters = {}, limit = 10, wait = false }) {
@@ -20,7 +21,11 @@ export class SearchRunCoordinator {
     this.store.updateSearchRun(runId, { status: 'running' });
     const settled = await Promise.allSettled(selectedSources.map(async (source) => {
       this.store.updateSourceStatus(runId, source, { status: 'running', startedAt: new Date().toISOString() });
-      const results = await this.searchEngine.search({ tenantId, userId, query, sources: [source], filters, limit });
+      const connector = this.registry?.get(source);
+      const federatedResults = connector?.search
+        ? await connector.search({ tenantId, userId, query, filters, limit })
+        : null;
+      const results = federatedResults || await this.searchEngine.search({ tenantId, userId, query, sources: [source], filters, limit });
       const lineItems = results.map((result) => normalizeLineItem(runId, result));
       this.store.updateSourceStatus(runId, source, { status: 'completed', completedAt: new Date().toISOString(), resultCount: lineItems.length });
       return lineItems;

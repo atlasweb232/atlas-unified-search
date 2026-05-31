@@ -9,7 +9,34 @@ export class EmailConnector {
   }
 
   isConfigured() {
-    return Boolean(this.config.baseUrl && this.config.sessionId);
+    return Boolean((this.config.baseUrl && this.config.sessionId) || this.config.searchUrl);
+  }
+
+  async search({ tenantId, userId, query, filters = {}, limit = 10 }) {
+    if (!this.config.searchUrl) return null;
+    const response = await fetch(this.config.searchUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.config.apiToken ? { Authorization: `Bearer ${this.config.apiToken}` } : {}),
+      },
+      body: JSON.stringify({ tenantId, userId, query, filters, limit }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.success === false) throw new Error(data.error || data.message || 'Federated email search failed');
+    return (data.results || data.items || []).map((item) => ({
+      id: item.id || item.documentId || item.messageId,
+      source: SOURCES.email,
+      title: item.title || item.subject || '(no subject)',
+      oneLine: item.oneLine || item.summary || oneLine(item.body || item.preview),
+      author: item.author || item.sender || item.from || '',
+      timestamp: item.timestamp || item.receivedAt || item.receivedDateTime || new Date().toISOString(),
+      container: item.container || item.folder || 'Inbox',
+      score: Number(item.score || 0.5),
+      sourceUri: item.sourceUri || item.webLink || '',
+      children: item.children || [],
+      metadata: item.metadata || { attachments: item.attachments || [] },
+    }));
   }
 
   async sync({ tenantId, userId, options = {} }) {

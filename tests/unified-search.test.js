@@ -11,6 +11,10 @@ function config(dataDir) {
     embeddingProvider: 'hash',
     openaiApiKey: '',
     embeddingModel: 'test',
+    auth: { required: false, token: '' },
+    postgres: { connectionString: '', ssl: false },
+    serviceBus: { connectionString: '', syncQueueName: 'unified-search-sync' },
+    artifacts: { azureStorageConnectionString: '', container: 'unified-search-artifacts', publicBaseUrl: '' },
     slack: { botToken: '', channelIds: [], limit: 10 },
     gdrive: { clientId: '', clientSecret: '', refreshToken: '', serviceAccountJson: '', folderIds: [], limit: 10 },
     email: { baseUrl: '', sessionId: '', limit: 10 },
@@ -19,6 +23,32 @@ function config(dataDir) {
     dataFabric: { baseUrl: '' },
   };
 }
+
+test('api auth boundary blocks protected endpoints when enabled', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-auth-'));
+  let server;
+  try {
+    const app = await createApp({ ...config(dir), auth: { required: true, token: 'test-token' } });
+    server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+
+    const health = await fetch(`${base}/v1/health`).then((response) => response.json());
+    assert.equal(health.success, true);
+    assert.equal(health.auth.required, true);
+
+    const unauthorized = await fetch(`${base}/v1/connectors`);
+    assert.equal(unauthorized.status, 401);
+
+    const authorized = await fetch(`${base}/v1/connectors`, {
+      headers: { Authorization: 'Bearer test-token' },
+    });
+    assert.equal(authorized.status, 200);
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
 
 async function post(base, url, body) {
   const response = await fetch(`${base}${url}`, {
