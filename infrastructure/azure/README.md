@@ -70,6 +70,23 @@ curl -s "$BASE/v1/connectors/readiness" -H "Authorization: Bearer $UNIFIED_SEARC
 curl -s "$BASE/v1/production-readiness" -H "Authorization: Bearer $UNIFIED_SEARCH_AUTH_TOKEN" | jq
 ```
 
+Config audit without printing secret values:
+
+```bash
+export UNIFIED_SEARCH_BASE_URL='https://atlas-unified-search.proudfield-a201b3fd.eastus.azurecontainerapps.io'
+export UNIFIED_SEARCH_AUTH_TOKEN='<same token wired into Container App>'
+npm run audit:production-config
+```
+
+The audit reports:
+
+- API and worker image/revision/env names
+- infrastructure gates
+- live connector gates for email, conference bridge, and knowledge base
+- credential-blocked gates for Slack and Google Drive
+- future connector gates for Data Fabric
+- runtime `/v1/production-readiness` summary when token/base URL are provided
+
 Repeatable production smoke tests:
 
 ```bash

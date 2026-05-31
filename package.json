@@ -11,6 +11,7 @@
     "start:worker": "node src/worker.js",
     "build": "vite build frontend",
     "db:migrate": "node scripts/migrate-postgres.mjs",
+    "audit:production-config": "node scripts/audit-production-config.mjs",
     "smoke:production": "node scripts/smoke-production.mjs",
     "smoke:production:ui": "node scripts/smoke-production-ui.mjs",
     "seed:fixtures": "node scripts/seed-fixtures.mjs",

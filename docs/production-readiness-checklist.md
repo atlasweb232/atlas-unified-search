@@ -28,6 +28,7 @@ The unified search service is production-testable when these gates are true:
 - `npm run smoke:production:ui` passes against the hosted frontend and protected API boundary.
 - `GET /v1/connectors/readiness` returns explicit `ready/status/requirements` for each connector without exposing secret values.
 - `GET /v1/production-readiness` returns `readyForProductionTesting:true`, lists Slack/GDrive under `credentialBlockedSources` until real credentials are configured, and only sets `productionComplete:true` after every live source is proven.
+- `npm run audit:production-config` reports API/worker env wiring and credential blockers without printing secret values.
 
 Known non-blocking follow-up after the first production test:
 

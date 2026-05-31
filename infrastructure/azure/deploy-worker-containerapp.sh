@@ -47,12 +47,47 @@ az containerapp secret set \
     unified-search-postgres="$POSTGRES_CONNECTION_STRING" \
     unified-search-servicebus="$SERVICE_BUS_CONNECTION_STRING" \
     openai-api-key="${OPENAI_API_KEY:-unused}" \
-    slack-bot-token="${SLACK_BOT_TOKEN:-unused}" \
-    google-client-id="${GOOGLE_CLIENT_ID:-unused}" \
-    google-client-secret="${GOOGLE_CLIENT_SECRET:-unused}" \
-    google-refresh-token="${GOOGLE_REFRESH_TOKEN:-unused}" \
     artifact-storage="${ARTIFACT_STORAGE_CONNECTION_STRING:-unused}" \
   --output none
+
+SECRET_ENV_VARS=(
+  POSTGRES_CONNECTION_STRING=secretref:unified-search-postgres
+  SERVICE_BUS_CONNECTION_STRING=secretref:unified-search-servicebus
+  OPENAI_API_KEY=secretref:openai-api-key
+  ARTIFACT_STORAGE_CONNECTION_STRING=secretref:artifact-storage
+)
+
+append_secret_env() {
+  local env_name="$1"
+  local secret_name="$2"
+  if [[ -n "${!env_name:-}" ]]; then
+    az containerapp secret set \
+      --resource-group "$RESOURCE_GROUP" \
+      --name "$APP_NAME" \
+      --secrets "$secret_name=${!env_name}" \
+      --output none
+    SECRET_ENV_VARS+=("$env_name=secretref:$secret_name")
+  fi
+}
+
+append_value_env() {
+  local env_name="$1"
+  if [[ -n "${!env_name:-}" ]]; then
+    SECRET_ENV_VARS+=("$env_name=${!env_name}")
+  fi
+}
+
+append_secret_env "SLACK_BOT_TOKEN" "slack-bot-token"
+append_secret_env "GOOGLE_CLIENT_ID" "google-client-id"
+append_secret_env "GOOGLE_CLIENT_SECRET" "google-client-secret"
+append_secret_env "GOOGLE_REFRESH_TOKEN" "google-refresh-token"
+append_secret_env "GOOGLE_SERVICE_ACCOUNT_JSON" "google-service-account-json"
+append_secret_env "AZURE_STORAGE_CONNECTION_STRING" "azure-storage"
+append_value_env "SLACK_CHANNEL_IDS"
+append_value_env "GDRIVE_FOLDER_IDS"
+append_value_env "CONFERENCE_BLOB_CONTAINERS"
+append_value_env "KNOWLEDGE_BASE_ROOT"
+append_value_env "DATA_FABRIC_BASE_URL"
 
 az containerapp update \
   --resource-group "$RESOURCE_GROUP" \
@@ -60,15 +95,7 @@ az containerapp update \
   --image "$IMAGE" \
   --command node \
   --args src/worker.js \
-  --set-env-vars \
-    POSTGRES_CONNECTION_STRING=secretref:unified-search-postgres \
-    SERVICE_BUS_CONNECTION_STRING=secretref:unified-search-servicebus \
-    OPENAI_API_KEY=secretref:openai-api-key \
-    SLACK_BOT_TOKEN=secretref:slack-bot-token \
-    GOOGLE_CLIENT_ID=secretref:google-client-id \
-    GOOGLE_CLIENT_SECRET=secretref:google-client-secret \
-    GOOGLE_REFRESH_TOKEN=secretref:google-refresh-token \
-    ARTIFACT_STORAGE_CONNECTION_STRING=secretref:artifact-storage \
+  --set-env-vars "${SECRET_ENV_VARS[@]}" \
     SERVICE_BUS_SYNC_QUEUE_NAME="${SERVICE_BUS_SYNC_QUEUE_NAME:-unified-search-sync}" \
     EMBEDDING_PROVIDER="${EMBEDDING_PROVIDER:-hash}" \
   --output none
