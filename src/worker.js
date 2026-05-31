@@ -26,12 +26,37 @@ console.log(`Unified search worker listening on ${config.serviceBus.syncQueueNam
 receiver.subscribe({
   processMessage: async (message) => {
     const body = message.body || {};
-    await jobs.run(body.jobId, {
+    console.log('Service Bus sync received', {
+      jobId: body.jobId,
       source: body.source,
       tenantId: body.tenantId,
       userId: body.userId,
-      options: body.options || {},
     });
+    try {
+      await store.refresh?.();
+      const result = await jobs.run(body.jobId, {
+        source: body.source,
+        tenantId: body.tenantId,
+        userId: body.userId,
+        options: body.options || {},
+      });
+      console.log('Service Bus sync completed', {
+        jobId: body.jobId,
+        source: body.source,
+        tenantId: body.tenantId,
+        userId: body.userId,
+        indexed: result.indexed,
+      });
+    } catch (error) {
+      console.error('Service Bus sync failed', {
+        jobId: body.jobId,
+        source: body.source,
+        tenantId: body.tenantId,
+        userId: body.userId,
+        error: error.message,
+      });
+      throw error;
+    }
   },
   processError: async (error) => {
     console.error('Service Bus worker error', error);
