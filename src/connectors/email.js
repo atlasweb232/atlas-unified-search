@@ -6,6 +6,7 @@ export class EmailConnector {
     this.config = config.email;
     this.practical = true;
     this.description = 'Atlas Email connector over the email assistant backend or supplied fixtures.';
+    this.vectorizationMode = this.config.searchUrl ? 'external_federated' : 'local_index';
   }
 
   isConfigured() {

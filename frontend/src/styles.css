@@ -40,6 +40,31 @@ button, input, textarea { font: inherit; }
   font-size: 12px;
 }
 
+.mode-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 4px;
+  border: 1px solid #dfe5ef;
+  border-radius: 999px;
+  padding: 2px 6px;
+  color: #465267;
+  background: #f8fafc;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.mode-badge.federated {
+  border-color: #b9d7ff;
+  color: #1d4f91;
+  background: #eff6ff;
+}
+
+.mode-badge.indexed {
+  border-color: #c7ead4;
+  color: #1f7a43;
+  background: #f0fbf4;
+}
+
 h2 {
   font-size: 13px;
   text-transform: uppercase;

@@ -209,6 +209,9 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
                   <span className="connector-main">
                     <strong>{sourceMeta[source]?.label || source}</strong>
                     <small>{status?.status || check?.status || (connector?.configured ? 'configured' : 'not configured')}</small>
+                    <span className={`mode-badge ${connector?.vectorizationMode === 'external_federated' ? 'federated' : 'indexed'}`}>
+                      {connector?.vectorizationMode === 'external_federated' ? 'Federated vector space' : 'Indexed here'}
+                    </span>
                   </span>
                 </label>
                 <div className="connector-actions">
@@ -231,6 +234,9 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
                 )}
                 {setupGuide && !setupGuide.ready && (
                   <p className="setup-hint">{setupGuide.nextAction}</p>
+                )}
+                {setupGuide?.ready && setupGuide.vectorizationBoundary && (
+                  <p className="setup-hint">{setupGuide.vectorizationBoundary}</p>
                 )}
               </div>
             );

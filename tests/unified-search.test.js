@@ -51,6 +51,8 @@ test('api auth boundary blocks protected endpoints when enabled', async () => {
       headers: { Authorization: 'Bearer test-token' },
     });
     assert.equal(authorized.status, 200);
+    const authorizedBody = await authorized.json();
+    assert.ok(authorizedBody.connectors.every((connector) => connector.vectorizationMode));
 
     const readiness = await fetch(`${base}/v1/production-readiness`, {
       headers: { Authorization: 'Bearer test-token' },
@@ -364,7 +366,12 @@ test('email connector readiness exposes smoke user and federated search complete
 
     const readiness = await fetch(`${base}/v1/connectors/readiness?source=email`).then((response) => response.json());
     assert.equal(readiness.checks[0].ready, true);
+    assert.equal(readiness.checks[0].vectorizationMode, 'external_federated');
     assert.equal(readiness.checks[0].details.readinessUserEmail, 'indexed@atlasweb.info');
+
+    const setup = await fetch(`${base}/v1/connectors/setup?source=email`).then((response) => response.json());
+    assert.equal(setup.setup[0].vectorizationMode, 'external_federated');
+    assert.match(setup.setup[0].vectorizationBoundary, /existing Atlas email vector service/);
 
     const run = await post(base, '/v1/search-runs', {
       tenantId: 'atlasweb',

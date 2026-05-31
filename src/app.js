@@ -404,11 +404,20 @@ function connectorSetupGuide(checks) {
       status: check.status,
       missing,
       requirements: check.requirements || [],
+      vectorizationMode: check.vectorizationMode || 'local_index',
+      vectorizationBoundary: vectorizationBoundary(check.source, check.vectorizationMode || 'local_index'),
       nextAction: setupNextAction(check.source, missing, check),
       liveSmoke: liveSmokeGuide(check.source),
     };
     return base;
   });
+}
+
+function vectorizationBoundary(source, mode) {
+  if (source === 'email' && mode === 'external_federated') {
+    return 'Email search is federated into the existing Atlas email vector service; unified search does not create or store email embeddings for this path.';
+  }
+  return 'This connector is indexed and vectorized inside unified search for the tenant/user scope used by sync or reindex jobs.';
 }
 
 function setupNextAction(source, missing, check) {

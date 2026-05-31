@@ -23,10 +23,16 @@ report.checks.push({
 });
 
 const setup = await apiRequest('/v1/connectors/setup');
+const emailSetup = setup.setup.find((item) => item.source === 'email');
+if (emailSetup?.ready) {
+  assert(emailSetup.vectorizationMode === 'external_federated', `expected email to be external_federated, got ${emailSetup.vectorizationMode}`);
+  assert(/existing Atlas email vector service/i.test(emailSetup.vectorizationBoundary || ''), 'email setup did not describe the external email vector boundary');
+}
 report.checks.push({
   name: 'connector_setup_guidance',
   status: 'ok',
   blocked: setup.setup.filter((item) => !item.ready).map((item) => ({ source: item.source, missing: item.missing })),
+  emailVectorizationMode: emailSetup?.vectorizationMode || '',
 });
 
 if (readinessBySource.email?.ready) {
@@ -65,7 +71,7 @@ console.log(JSON.stringify(report, null, 2));
 async function checkFrontend() {
   const html = await fetchText(frontend);
   assert(/<div id="root"><\/div>/.test(html), 'local frontend root shell missing');
-  const assets = [...html.matchAll(/(?:src|href)="([^"]+\.(?:js|jsx|css))"/g)].map((match) => match[1]);
+  const assets = [...html.matchAll(/(?:src|href)="([^"]+\.(?:js|jsx|css)(?:\?[^"]*)?)"/g)].map((match) => match[1]);
   assert(assets.length >= 1, 'local frontend did not reference JS/JSX/CSS assets');
   for (const asset of assets) {
     const response = await fetch(`${frontend}${asset}`);

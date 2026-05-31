@@ -17,6 +17,7 @@ export class ConnectorRegistry {
       configured: connector.isConfigured(),
       practical: connector.practical,
       description: connector.description,
+      vectorizationMode: connector.vectorizationMode || 'local_index',
       requirements: typeof connector.requirements === 'function' ? connector.requirements() : [],
     }));
   }
@@ -28,6 +29,7 @@ export class ConnectorRegistry {
         source: connector.source,
         configured: connector.isConfigured(),
         practical: connector.practical,
+        vectorizationMode: connector.vectorizationMode || 'local_index',
         requirements: typeof connector.requirements === 'function' ? connector.requirements() : [],
       };
       if (!connector.isConfigured()) {
