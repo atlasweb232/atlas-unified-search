@@ -43,6 +43,7 @@ console.log('connector readiness', readiness.data.checks.map((check) => ({
   ready: check.ready,
   status: check.status,
 })));
+const readinessBySource = Object.fromEntries((readiness.data.checks || []).map((check) => [check.source, check]));
 
 const wait = mode !== 'async';
 const sync = await request('/v1/sync/slack', {
@@ -98,6 +99,45 @@ const action = await request('/v1/assistant/actions', {
 assert(action.ok && action.data.actionJob?.status === 'completed', `assistant action failed: ${JSON.stringify(action.data)}`);
 assert(action.data.actionJob.artifactIds?.length, 'assistant action did not create an artifact');
 console.log('assistant artifact ok', { actionId: action.data.actionJob.id, artifactIds: action.data.actionJob.artifactIds });
+
+if (readinessBySource.conference_bridge?.ready) {
+  const conferenceTenantId = `${tenantId}_conference`;
+  const conferenceUserId = `${userId}_conference`;
+  const prefix = process.env.UNIFIED_SEARCH_SMOKE_CONFERENCE_PREFIX || 'smoke/';
+  const conference = await request('/v1/reindex/conference_bridge', {
+    method: 'POST',
+    body: JSON.stringify({
+      tenantId: conferenceTenantId,
+      userId: conferenceUserId,
+      wait: true,
+      options: { prefix },
+    }),
+  });
+  assert(conference.ok && conference.data.indexed >= 1, `conference sync failed: ${JSON.stringify(conference.data)}`);
+  const conferenceSearch = await request('/v1/search', {
+    method: 'POST',
+    body: JSON.stringify({
+      tenantId: conferenceTenantId,
+      userId: conferenceUserId,
+      query: 'conference bridge transcript Azure Blob indexing',
+      sources: ['conference_bridge'],
+      limit: 5,
+    }),
+  });
+  assert(conferenceSearch.ok && conferenceSearch.data.results?.length, `conference search failed: ${JSON.stringify(conferenceSearch.data)}`);
+  await request('/v1/documents', {
+    method: 'DELETE',
+    body: JSON.stringify({
+      tenantId: conferenceTenantId,
+      userId: conferenceUserId,
+      source: 'conference_bridge',
+      resetCheckpoints: true,
+    }),
+  });
+  console.log('conference bridge live source ok', { indexed: conference.data.indexed, count: conferenceSearch.data.results.length, prefix });
+} else {
+  console.log('conference bridge live source skipped', { status: readinessBySource.conference_bridge?.status || 'not_reported' });
+}
 
 async function waitForJob(jobId) {
   for (let attempt = 1; attempt <= 24; attempt += 1) {

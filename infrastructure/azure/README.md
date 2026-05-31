@@ -35,6 +35,8 @@ export SERVICE_BUS_CONNECTION_STRING='<service-bus-connection-string>'
 export SERVICE_BUS_SYNC_QUEUE_NAME='unified-search-sync'
 export ARTIFACT_STORAGE_CONNECTION_STRING='<storage-connection-string>'
 export ARTIFACT_BLOB_CONTAINER='unified-search-artifacts'
+export AZURE_STORAGE_CONNECTION_STRING='<storage-connection-string>'
+export CONFERENCE_BLOB_CONTAINERS='conference-transcripts'
 export EMBEDDING_PROVIDER='openai'
 export OPENAI_API_KEY='<openai-or-azure-openai-compatible-key>'
 export CHAT_PROVIDER='openai-compatible' # or azure-openai, anthropic, cerebras
@@ -76,6 +78,10 @@ UNIFIED_SEARCH_SMOKE_MODE=inline npm run smoke:production
 UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production
 npm run smoke:production:ui
 ```
+
+If `conference_bridge` readiness is `ready:true`, `smoke:production` also runs
+a live Blob transcript reindex/search using
+`UNIFIED_SEARCH_SMOKE_CONFERENCE_PREFIX`, defaulting to `smoke/`.
 
 Expected production health:
 

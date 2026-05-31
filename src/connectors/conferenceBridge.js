@@ -5,12 +5,41 @@ export class ConferenceBridgeConnector {
   constructor(config) {
     this.source = SOURCES.conference;
     this.config = config.conference;
-    this.practical = false;
+    this.practical = true;
     this.description = 'Conference bridge transcript/recording connector over Azure Blob Storage.';
   }
 
   isConfigured() {
     return Boolean(this.config.azureStorageConnectionString && this.config.containers.length);
+  }
+
+  requirements() {
+    return [
+      { name: 'AZURE_STORAGE_CONNECTION_STRING', configured: Boolean(this.config.azureStorageConnectionString) },
+      { name: 'CONFERENCE_BLOB_CONTAINERS', configured: Boolean(this.config.containers.length) },
+    ];
+  }
+
+  async checkReadiness() {
+    const service = BlobServiceClient.fromConnectionString(this.config.azureStorageConnectionString);
+    const containers = [];
+    for (const containerName of this.config.containers.slice(0, 5)) {
+      const container = service.getContainerClient(containerName);
+      const exists = await container.exists();
+      let sampleBlob = '';
+      if (exists) {
+        for await (const blob of container.listBlobsFlat().byPage({ maxPageSize: 1 })) {
+          sampleBlob = blob.segment.blobItems?.[0]?.name || '';
+          break;
+        }
+      }
+      containers.push({ name: containerName, exists, sampleBlob });
+    }
+    return {
+      ready: containers.every((container) => container.exists),
+      status: containers.every((container) => container.exists) ? 'ok' : 'container_missing',
+      details: { containers },
+    };
   }
 
   async sync({ tenantId, userId, options = {} }) {
