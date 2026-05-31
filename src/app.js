@@ -104,7 +104,7 @@ export async function createApp(config) {
       const job = await jobs.enqueue({ source: req.params.source, tenantId, userId, options, autoStart: !wait });
       if (wait) {
         const result = await jobs.run(job.id, { source: req.params.source, tenantId, userId, options });
-        return res.json({ success: true, job: store.state.jobs[job.id], indexed: result.indexed });
+        return res.json({ success: true, job: result.job, indexed: result.indexed });
       }
       return res.status(202).json({ success: true, job });
     } catch (error) {
@@ -209,7 +209,7 @@ export async function createApp(config) {
       });
       if (wait) {
         const result = await jobs.run(job.id, { source: req.params.source, tenantId, userId, options: { ...options, forceFullSync: true } });
-        return res.json({ success: true, deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted, job: store.state.jobs[job.id], indexed: result.indexed });
+        return res.json({ success: true, deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted, job: result.job, indexed: result.indexed });
       }
       return res.status(202).json({ success: true, deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted, job });
     } catch (error) {
