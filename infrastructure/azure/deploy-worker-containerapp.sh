@@ -83,11 +83,14 @@ append_secret_env "GOOGLE_CLIENT_SECRET" "google-client-secret"
 append_secret_env "GOOGLE_REFRESH_TOKEN" "google-refresh-token"
 append_secret_env "GOOGLE_SERVICE_ACCOUNT_JSON" "google-service-account-json"
 append_secret_env "AZURE_STORAGE_CONNECTION_STRING" "azure-storage"
+append_secret_env "DATA_FABRIC_API_TOKEN" "data-fabric-api-token"
 append_value_env "SLACK_CHANNEL_IDS"
 append_value_env "GDRIVE_FOLDER_IDS"
 append_value_env "CONFERENCE_BLOB_CONTAINERS"
 append_value_env "KNOWLEDGE_BASE_ROOT"
 append_value_env "DATA_FABRIC_BASE_URL"
+append_value_env "DATA_FABRIC_READINESS_PATH"
+append_value_env "DATA_FABRIC_RECORDS_PATH"
 
 az containerapp update \
   --resource-group "$RESOURCE_GROUP" \

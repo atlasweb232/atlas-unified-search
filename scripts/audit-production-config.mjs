@@ -71,7 +71,13 @@ const report = {
     futureConnectors: [
       groupGate('data_fabric', [
         envGate(apiEnv, 'DATA_FABRIC_BASE_URL', 'value'),
+        envGate(apiEnv, 'DATA_FABRIC_API_TOKEN', 'secretRef', 'api', true),
+        envGate(apiEnv, 'DATA_FABRIC_READINESS_PATH', 'value', 'api', true),
+        envGate(apiEnv, 'DATA_FABRIC_RECORDS_PATH', 'value', 'api', true),
         envGate(workerEnv, 'DATA_FABRIC_BASE_URL', 'value', 'worker'),
+        envGate(workerEnv, 'DATA_FABRIC_API_TOKEN', 'secretRef', 'worker', true),
+        envGate(workerEnv, 'DATA_FABRIC_READINESS_PATH', 'value', 'worker', true),
+        envGate(workerEnv, 'DATA_FABRIC_RECORDS_PATH', 'value', 'worker', true),
       ]),
     ],
   },
@@ -125,13 +131,14 @@ function summarizeApp(app, env) {
   };
 }
 
-function envGate(env, name, expectedKind, app = 'api') {
+function envGate(env, name, expectedKind, app = 'api', optional = false) {
   const item = env[name] || {};
   const kind = item.secretRef ? 'secretRef' : item.value ? 'value' : 'missing';
   return {
     app,
     name,
-    present: kind === expectedKind || (expectedKind === 'any' && kind !== 'missing'),
+    optional,
+    present: optional || kind === expectedKind || (expectedKind === 'any' && kind !== 'missing'),
     kind,
   };
 }

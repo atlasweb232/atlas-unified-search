@@ -95,6 +95,9 @@ export function loadConfig() {
     },
     dataFabric: {
       baseUrl: process.env.DATA_FABRIC_BASE_URL || '',
+      apiToken: process.env.DATA_FABRIC_API_TOKEN || '',
+      readinessPath: process.env.DATA_FABRIC_READINESS_PATH || '/health',
+      recordsPath: process.env.DATA_FABRIC_RECORDS_PATH || '/records',
     },
   };
 }

@@ -38,6 +38,10 @@ export ARTIFACT_BLOB_CONTAINER='unified-search-artifacts'
 export AZURE_STORAGE_CONNECTION_STRING='<storage-connection-string>'
 export CONFERENCE_BLOB_CONTAINERS='conference-transcripts'
 export KNOWLEDGE_BASE_ROOT='/app/docs'
+export DATA_FABRIC_BASE_URL='<data-fabric-service-base-url>'
+export DATA_FABRIC_API_TOKEN='<optional-data-fabric-token>'
+export DATA_FABRIC_READINESS_PATH='/health'
+export DATA_FABRIC_RECORDS_PATH='/records'
 export EMBEDDING_PROVIDER='openai'
 export OPENAI_API_KEY='<openai-or-azure-openai-compatible-key>'
 export CHAT_PROVIDER='openai-compatible' # or azure-openai, anthropic, cerebras
@@ -109,6 +113,16 @@ does not verify real Slack Web API access without `SLACK_BOT_TOKEN` and
 If `conference_bridge` readiness is `ready:true`, `smoke:production` also runs
 a live Blob transcript reindex/search using
 `UNIFIED_SEARCH_SMOKE_CONFERENCE_PREFIX`, defaulting to `smoke/`.
+
+Data Fabric live connector contract:
+
+- `GET $DATA_FABRIC_BASE_URL$DATA_FABRIC_READINESS_PATH` returns JSON with
+  optional `{ "ready": true, "service": "...", "version": "..." }`.
+- `GET $DATA_FABRIC_BASE_URL$DATA_FABRIC_RECORDS_PATH?tenantId=&userId=&dataset=&since=&limit=`
+  returns `{ "records": [...] }`, `{ "items": [...] }`, or
+  `{ "data": { "records": [...] } }`.
+- Records are normalized from fields like `id`, `title`, `text`, `record`,
+  `owner`, `timestamp`, and `dataset`.
 
 Expected production health:
 

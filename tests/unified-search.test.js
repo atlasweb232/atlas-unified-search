@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../src/app.js';
@@ -21,7 +22,7 @@ function config(dataDir) {
     email: { baseUrl: '', sessionId: '', limit: 10 },
     conference: { azureStorageConnectionString: '', containers: [] },
     knowledgeBase: { root: '' },
-    dataFabric: { baseUrl: '' },
+    dataFabric: { baseUrl: '', apiToken: '', readinessPath: '/health', recordsPath: '/records' },
   };
 }
 
@@ -232,3 +233,85 @@ test('source permissions block disallowed sync and search sources', async () => 
     await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
+
+test('data fabric connector syncs live HTTP records', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-fabric-'));
+  let fabricServer;
+  let appServer;
+  try {
+    fabricServer = await listen((req, res) => {
+      const url = new URL(req.url, 'http://127.0.0.1');
+      res.setHeader('Content-Type', 'application/json');
+      if (url.pathname === '/health') {
+        res.end(JSON.stringify({ ready: true, service: 'test-fabric', version: '1' }));
+        return;
+      }
+      if (url.pathname === '/records') {
+        assert.equal(req.headers.authorization, 'Bearer fabric-token');
+        assert.equal(url.searchParams.get('tenantId'), 'atlasweb');
+        assert.equal(url.searchParams.get('userId'), 'rakib');
+        res.end(JSON.stringify({
+          records: [{
+            id: 'usage-1',
+            title: 'Search Usage Metric',
+            text: 'Data Fabric says unified search processed 42 customer queries.',
+            record: { metric: 'queries', value: 42, dataset: 'usage' },
+            owner: 'fabric',
+            dataset: 'usage',
+            timestamp: '2026-05-31T14:00:00.000Z',
+          }],
+        }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end(JSON.stringify({ error: 'not found' }));
+    });
+
+    const app = await createApp({
+      ...config(dir),
+      dataFabric: {
+        baseUrl: `http://127.0.0.1:${fabricServer.address().port}`,
+        apiToken: 'fabric-token',
+        readinessPath: '/health',
+        recordsPath: '/records',
+      },
+    });
+    appServer = app.listen(0);
+    await new Promise((resolve) => appServer.once('listening', resolve));
+    const base = `http://127.0.0.1:${appServer.address().port}`;
+
+    const readiness = await fetch(`${base}/v1/connectors/readiness?source=data_fabric`).then((response) => response.json());
+    assert.equal(readiness.success, true);
+    assert.equal(readiness.checks[0].ready, true);
+    assert.equal(readiness.checks[0].status, 'ok');
+
+    const sync = await post(base, '/v1/sync/data_fabric', {
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      wait: true,
+      options: { dataset: 'usage', limit: 5 },
+    });
+    assert.equal(sync.indexed, 1);
+
+    const search = await post(base, '/v1/search', {
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      query: 'customer queries',
+      sources: ['data_fabric'],
+    });
+    assert.equal(search.results[0].source, 'data_fabric');
+    assert.match(search.results[0].oneLine, /unified search/i);
+  } finally {
+    if (appServer) await new Promise((resolve) => appServer.close(resolve));
+    if (fabricServer) await new Promise((resolve) => fabricServer.close(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
+function listen(handler) {
+  return new Promise((resolve) => {
+    const server = createServer(handler);
+    server.listen(0, () => resolve(server));
+  });
+}
