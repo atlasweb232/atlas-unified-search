@@ -134,11 +134,13 @@ function summarizeApp(app, env) {
 function envGate(env, name, expectedKind, app = 'api', optional = false) {
   const item = env[name] || {};
   const kind = item.secretRef ? 'secretRef' : item.value ? 'value' : 'missing';
+  const present = kind !== 'missing';
   return {
     app,
     name,
     optional,
-    present: optional || kind === expectedKind || (expectedKind === 'any' && kind !== 'missing'),
+    present,
+    satisfied: optional || kind === expectedKind || (expectedKind === 'any' && present),
     kind,
   };
 }
@@ -146,7 +148,7 @@ function envGate(env, name, expectedKind, app = 'api', optional = false) {
 function groupGate(name, gates) {
   return {
     name,
-    ready: gates.every((gate) => gate.ready ?? gate.present),
+    ready: gates.every((gate) => gate.ready ?? gate.satisfied ?? gate.present),
     gates,
   };
 }
