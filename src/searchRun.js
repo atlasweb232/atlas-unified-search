@@ -37,20 +37,41 @@ export class SearchRunCoordinator {
       return lineItems;
     }));
     const results = [];
+    const finalSourceStatuses = [];
     for (const [index, result] of settled.entries()) {
       const source = selectedSources[index];
       if (result.status === 'fulfilled') {
         results.push(...result.value);
+        finalSourceStatuses.push({
+          source,
+          status: 'completed',
+          completedAt: new Date().toISOString(),
+          resultCount: result.value.length,
+          error: '',
+        });
       } else {
+        const error = result.reason?.message || 'Search failed';
         this.store.updateSourceStatus(runId, source, { status: 'failed', completedAt: new Date().toISOString(), error: result.reason?.message || 'Search failed' });
+        finalSourceStatuses.push({
+          source,
+          status: 'failed',
+          completedAt: new Date().toISOString(),
+          resultCount: 0,
+          error,
+        });
       }
     }
     const deduped = dedupe(results).sort((left, right) => right.score - left.score).slice(0, limit);
     const completeRun = async () => {
       const currentRun = this.store.getSearchRun(runId);
       if (!currentRun) throw new Error(`Search run ${runId} was not found while completing`);
-      const failed = currentRun.sourceStatuses.some((status) => status.status === 'failed');
-      this.store.updateSearchRun(runId, { status: failed ? 'partial' : 'completed', results: deduped, completedAt: new Date().toISOString() });
+      const failed = finalSourceStatuses.some((status) => status.status === 'failed');
+      this.store.updateSearchRun(runId, {
+        status: failed ? 'partial' : 'completed',
+        sourceStatuses: finalSourceStatuses,
+        results: deduped,
+        completedAt: new Date().toISOString(),
+      });
       this.store.audit({ eventType: 'search_run_complete', tenantId, userId, metadata: { runId, resultCount: deduped.length, failed } });
       await this.store.save();
       return this.store.getSearchRun(runId);
