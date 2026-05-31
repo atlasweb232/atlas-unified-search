@@ -123,7 +123,7 @@ report.summary = {
     .map((gate) => gate.name),
   productionReadinessEndpointReady: Boolean(report.runtime?.productionReadiness?.readyForProductionTesting),
   productionComplete: Boolean(report.runtime?.productionReadiness?.productionComplete),
-  schedulerReady: report.gates.scheduler.every((gate) => gate.satisfied),
+  schedulerReady: report.gates.scheduler.every((gate) => gateReady(gate)),
 };
 
 console.log(JSON.stringify(redact(report), null, 2));
@@ -194,6 +194,10 @@ function alternativeGate(name, alternatives) {
     ready: alternatives.some((alternative) => alternative.ready),
     alternatives,
   };
+}
+
+function gateReady(gate) {
+  return gate.ready ?? gate.satisfied ?? gate.present ?? false;
 }
 
 async function runtimeReadiness(url, authToken) {
