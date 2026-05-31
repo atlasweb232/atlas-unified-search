@@ -15,6 +15,7 @@ The unified search service is production-testable when these gates are true:
 - Google OAuth consent and refresh token are configured for Drive read access.
 - Email results use `EMAIL_VECTOR_SEARCH_URL` to federate against the existing Atlas email vector service.
 - Conference bridge transcripts use `AZURE_STORAGE_CONNECTION_STRING` and `CONFERENCE_BLOB_CONTAINERS`; when configured, production smoke reindexes and searches a scoped Blob prefix.
+- Knowledge base uses `KNOWLEDGE_BASE_ROOT`; the deployed image can use `/app/docs` for production smoke coverage.
 - Tenant/user IDs are supplied on every sync, search, search-run, document, and assistant action request.
 - Cross-tenant reads are rejected by API tests and manual smoke tests.
 - Scoped deletion and `/v1/reindex/{source}` are available for tenant/user/source resets without deleting other users' data.

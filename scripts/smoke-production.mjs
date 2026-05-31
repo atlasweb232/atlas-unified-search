@@ -139,6 +139,43 @@ if (readinessBySource.conference_bridge?.ready) {
   console.log('conference bridge live source skipped', { status: readinessBySource.conference_bridge?.status || 'not_reported' });
 }
 
+if (readinessBySource.knowledge_base?.ready) {
+  const kbTenantId = `${tenantId}_kb`;
+  const kbUserId = `${userId}_kb`;
+  const kb = await request('/v1/reindex/knowledge_base', {
+    method: 'POST',
+    body: JSON.stringify({
+      tenantId: kbTenantId,
+      userId: kbUserId,
+      wait: true,
+    }),
+  });
+  assert(kb.ok && kb.data.indexed >= 1, `knowledge base sync failed: ${JSON.stringify(kb.data)}`);
+  const kbSearch = await request('/v1/search', {
+    method: 'POST',
+    body: JSON.stringify({
+      tenantId: kbTenantId,
+      userId: kbUserId,
+      query: 'production readiness unified search',
+      sources: ['knowledge_base'],
+      limit: 5,
+    }),
+  });
+  assert(kbSearch.ok && kbSearch.data.results?.length, `knowledge base search failed: ${JSON.stringify(kbSearch.data)}`);
+  await request('/v1/documents', {
+    method: 'DELETE',
+    body: JSON.stringify({
+      tenantId: kbTenantId,
+      userId: kbUserId,
+      source: 'knowledge_base',
+      resetCheckpoints: true,
+    }),
+  });
+  console.log('knowledge base live source ok', { indexed: kb.data.indexed, count: kbSearch.data.results.length });
+} else {
+  console.log('knowledge base live source skipped', { status: readinessBySource.knowledge_base?.status || 'not_reported' });
+}
+
 async function waitForJob(jobId) {
   for (let attempt = 1; attempt <= 24; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 5000));

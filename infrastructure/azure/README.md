@@ -37,6 +37,7 @@ export ARTIFACT_STORAGE_CONNECTION_STRING='<storage-connection-string>'
 export ARTIFACT_BLOB_CONTAINER='unified-search-artifacts'
 export AZURE_STORAGE_CONNECTION_STRING='<storage-connection-string>'
 export CONFERENCE_BLOB_CONTAINERS='conference-transcripts'
+export KNOWLEDGE_BASE_ROOT='/app/docs'
 export EMBEDDING_PROVIDER='openai'
 export OPENAI_API_KEY='<openai-or-azure-openai-compatible-key>'
 export CHAT_PROVIDER='openai-compatible' # or azure-openai, anthropic, cerebras
