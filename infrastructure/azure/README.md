@@ -72,6 +72,7 @@ export UNIFIED_SEARCH_AUTH_TOKEN='<same token wired into Container App>'
 
 UNIFIED_SEARCH_SMOKE_MODE=inline npm run smoke:production
 UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production
+npm run smoke:production:ui
 ```
 
 Expected production health:

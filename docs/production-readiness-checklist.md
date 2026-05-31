@@ -10,6 +10,7 @@ The unified search service is production-testable when these gates are true:
 - `/v1/health` reports `queue.backend=azure-service-bus`.
 - Artifact Blob container exists and assistant artifacts are stored there.
 - `/v1/health` reports `artifacts.backend=azure-blob-artifact`.
+- Hosted frontend root `/` returns the React shell, built JS/CSS assets load, and protected `/v1/*` routes still reject unauthenticated callers.
 - Slack app is installed in the workspace with bot scopes listed in `docs/slack-gdrive-onboarding.md`.
 - Google OAuth consent and refresh token are configured for Drive read access.
 - Email results use `EMAIL_VECTOR_SEARCH_URL` to federate against the existing Atlas email vector service.
@@ -20,6 +21,7 @@ The unified search service is production-testable when these gates are true:
 - Optional `UNIFIED_SEARCH_SOURCE_PERMISSIONS` can restrict usable sources per `tenantId:userId`.
 - `npm run smoke:production` passes with `UNIFIED_SEARCH_SMOKE_MODE=inline`.
 - `npm run smoke:production` passes with `UNIFIED_SEARCH_SMOKE_MODE=async`, proving Service Bus worker ownership.
+- `npm run smoke:production:ui` passes against the hosted frontend and protected API boundary.
 - `GET /v1/connectors/readiness` returns explicit `ready/status/requirements` for each connector without exposing secret values.
 
 Known non-blocking follow-up after the first production test:
