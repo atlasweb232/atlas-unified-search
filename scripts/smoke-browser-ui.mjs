@@ -106,14 +106,7 @@ try {
   }, null, 2));
 } finally {
   if (dataFabricReady) {
-    await apiJson('/v1/sources/data_fabric/documents', {
-      method: 'DELETE',
-      body: {
-        tenantId,
-        userId,
-        resetCheckpoints: true,
-      },
-    }).catch(() => {});
+    await cleanupSource('data_fabric');
   }
   await browser.close();
 }
@@ -167,6 +160,20 @@ async function apiJson(path, { method = 'GET', body } = {}) {
     throw new Error(`${method} ${path} failed: ${response.status} ${data.error || JSON.stringify(data)}`);
   }
   return data;
+}
+
+async function cleanupSource(source) {
+  await apiJson(`/v1/sources/${source}/documents`, {
+    method: 'DELETE',
+    body: {
+      tenantId,
+      userId,
+      resetCheckpoints: true,
+    },
+  });
+  const status = await apiJson(`/v1/index/status?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(userId)}`);
+  const remaining = status.index?.bySource?.[source] || 0;
+  assert(remaining === 0, `${source} smoke cleanup left ${remaining} document(s)`);
 }
 
 function withRuntimeScope(baseUrl, scope) {
