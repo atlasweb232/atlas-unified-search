@@ -24,6 +24,17 @@ All credentials stay backend-side.
 SLACK_CHANNEL_IDS=C0123456789,C9876543210
 ```
 
+If you do not know the channel IDs yet, list channels visible to the bot:
+
+```bash
+export SLACK_BOT_TOKEN='xoxb-...'
+npm run slack:list-channels
+```
+
+By default the helper lists public and private channels where the bot is a
+member. Use `SLACK_CHANNEL_LIST_UNJOINED=true` only for inventory; validation
+and sync still require bot membership for private channels.
+
 7. For near-real-time Slack Events API ingestion, copy the app signing secret
    into backend secret storage as `SLACK_SIGNING_SECRET`, set the Slack Events
    request URL to
@@ -141,6 +152,22 @@ Google Drive push notifications do not include an HMAC signature. The endpoint
 therefore requires `X-Goog-Channel-Token` to match `GDRIVE_WEBHOOK_TOKEN` and,
 when configured, `X-Goog-Channel-ID` to be present in
 `GDRIVE_WEBHOOK_CHANNEL_IDS`.
+
+After Google credentials and the webhook token are present locally, create the
+Drive watch channel:
+
+```bash
+export UNIFIED_SEARCH_BASE_URL='https://atlas-unified-search.proudfield-a201b3fd.eastus.azurecontainerapps.io'
+export GDRIVE_WEBHOOK_TOKEN='<unguessable channel token>'
+export GDRIVE_EVENT_TENANT_ID=atlasweb
+export GDRIVE_EVENT_USER_ID=rakib.mahmood@tridentinter.io
+npm run gdrive:create-watch
+```
+
+The helper calls `changes.getStartPageToken` and `changes.watch`, does not print
+Google OAuth secrets, and returns the channel ID that should be wired as
+`GDRIVE_WEBHOOK_CHANNEL_IDS`. Use `GDRIVE_WATCH_DRY_RUN=true` to validate the
+local command shape without calling Google.
 
 7. Validate credentials before wiring them into Azure:
 
