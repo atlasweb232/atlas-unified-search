@@ -201,14 +201,15 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
             const check = readinessBySource[source];
             const setupGuide = setupBySource[source];
             const status = sourceStatuses[source];
+            const liveBlocked = isLiveCredentialBlocked(source, check);
             return (
-              <div key={source} data-testid={`connector-${source}`} className={`connector-card ${check?.ready ? 'ready' : ''}`}>
+              <div key={source} data-testid={`connector-${source}`} className={`connector-card ${check?.ready ? 'ready' : ''} ${liveBlocked ? 'blocked' : ''}`}>
                 <label className="connector-row">
                   <input data-testid={`source-toggle-${source}`} type="checkbox" checked={selectedSources.has(source)} onChange={() => toggleSource(source)} />
                   <span className="source-icon">{sourceMeta[source]?.icon || 'SRC'}</span>
                   <span className="connector-main">
                     <strong>{sourceMeta[source]?.label || source}</strong>
-                    <small>{formatSourceStatus(status) || check?.status || (connector?.configured ? 'configured' : 'not configured')}</small>
+                    <small>{connectorStatusLabel(source, check, connector, status)}</small>
                     <span className={`mode-badge ${connector?.vectorizationMode === 'external_federated' ? 'federated' : 'indexed'}`}>
                       {connector?.vectorizationMode === 'external_federated' ? 'Federated vector space' : 'Indexed here'}
                     </span>
@@ -234,6 +235,9 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
                 )}
                 {setupGuide && !setupGuide.ready && (
                   <p className="setup-hint">{setupGuide.nextAction}</p>
+                )}
+                {liveBlocked && (
+                  <p className="setup-hint auth-boundary">Search can only use previously indexed data for this source until live authentication passes readiness.</p>
                 )}
                 {setupGuide?.ready && setupGuide.vectorizationBoundary && (
                   <p className="setup-hint">{setupGuide.vectorizationBoundary}</p>
@@ -357,4 +361,15 @@ function formatSourceStatus(status) {
   if (status.status === 'running' && status.searchMode === 'local_index_only') return 'running, indexed data only';
   if (status.status === 'running' && status.searchMode === 'federated_live') return 'running, live federated';
   return status.status;
+}
+
+function connectorStatusLabel(source, check, connector, status) {
+  const runStatus = formatSourceStatus(status);
+  if (runStatus) return runStatus;
+  if (isLiveCredentialBlocked(source, check)) return 'not authenticated';
+  return check?.status || (connector?.configured ? 'configured' : 'not configured');
+}
+
+function isLiveCredentialBlocked(source, check) {
+  return ['slack', 'google_drive'].includes(source) && !check?.ready;
 }

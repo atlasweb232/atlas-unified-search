@@ -27,6 +27,9 @@ try {
   await expectText(page, '[data-testid="connector-conference_bridge"]', 'Indexed here');
   await expectText(page, '[data-testid="connector-knowledge_base"]', 'Indexed here');
   await expectText(page, '[data-testid="connector-slack"]', 'SLACK_BOT_TOKEN');
+  await expectText(page, '[data-testid="connector-slack"]', 'not authenticated');
+  await expectText(page, '[data-testid="connector-google_drive"]', 'not authenticated');
+  await expectText(page, '[data-testid="connector-google_drive"]', 'live authentication passes readiness');
 
   for (const source of ['slack', 'google_drive', 'conference_bridge', 'knowledge_base', 'data_fabric']) {
     const toggle = page.getByTestId(`source-toggle-${source}`);
@@ -55,7 +58,7 @@ try {
       'token entry authenticated connector loading',
       'email federated vector badge visible',
       'local-index connector badges visible',
-      'blocked Slack requirements visible',
+      'blocked Slack/GDrive authentication requirements visible',
       'email-only UI search returned results',
       'result expansion clicked',
       'assistant summarize action completed',
