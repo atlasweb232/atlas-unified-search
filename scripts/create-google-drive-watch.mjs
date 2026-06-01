@@ -46,16 +46,27 @@ const report = {
   ok: true,
   dryRun,
   address,
+  createdAt: new Date().toISOString(),
   channel: {
     id: watch.data.id,
     resourceId: watch.data.resourceId,
     expiration: watch.data.expiration ? new Date(Number(watch.data.expiration)).toISOString() : null,
   },
   startPageToken: startPageToken.data.startPageToken,
+  wireEnv: {
+    GDRIVE_WEBHOOK_CHANNEL_IDS: watch.data.id,
+  },
+  optionalPersistence: {
+    GDRIVE_WATCH_RESOURCE_ID: watch.data.resourceId,
+    GDRIVE_WATCH_START_PAGE_TOKEN: startPageToken.data.startPageToken,
+    GDRIVE_WATCH_EXPIRATION: watch.data.expiration ? new Date(Number(watch.data.expiration)).toISOString() : null,
+  },
   next: [
-    `Set GDRIVE_WEBHOOK_CHANNEL_IDS=${watch.data.id} before requiring strict Google webhook readiness.`,
+    `export GDRIVE_WEBHOOK_CHANNEL_IDS='${watch.data.id}'`,
+    'WIRE_CONNECTORS_VALIDATE_FIRST=true npm run wire:production-connectors',
+    'npm run status:webhooks',
+    'UNIFIED_SEARCH_SMOKE_REQUIRE_LIVE_SOURCES=google_drive npm run smoke:production',
     'Persist startPageToken if you want the first webhook-triggered sync to resume from this exact point.',
-    'Run npm run status:webhooks after wiring Azure to confirm google_drive_changes is ready.',
   ],
 };
 

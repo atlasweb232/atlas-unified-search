@@ -211,8 +211,11 @@ npm run gdrive:create-watch
 
 The helper calls `changes.getStartPageToken` and `changes.watch`, does not print
 Google OAuth secrets, and returns the channel ID that should be wired as
-`GDRIVE_WEBHOOK_CHANNEL_IDS`. Use `GDRIVE_WATCH_DRY_RUN=true` to validate the
-local command shape without calling Google.
+`wireEnv.GDRIVE_WEBHOOK_CHANNEL_IDS`. Use `GDRIVE_WATCH_DRY_RUN=true` to
+validate the local command shape without calling Google. The response also
+includes `optionalPersistence.GDRIVE_WATCH_RESOURCE_ID`,
+`optionalPersistence.GDRIVE_WATCH_START_PAGE_TOKEN`, and the channel expiration
+timestamp for audit/renewal tracking.
 
 7. Validate credentials before wiring them into Azure:
 
