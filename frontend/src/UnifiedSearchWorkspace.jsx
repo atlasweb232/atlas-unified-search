@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, ChevronDown, ChevronRight, FileDown, Loader2, RefreshCw, RotateCcw, Search, Send, Sparkles, Trash2 } from 'lucide-react';
-import { apiRequest, sourceMeta } from './api.js';
+import { apiRequest, apiStream, sourceMeta } from './api.js';
 
 const DEFAULT_SOURCES = ['email', 'slack', 'google_drive', 'conference_bridge', 'knowledge_base', 'data_fabric'];
 
@@ -74,17 +74,30 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
           userId,
           query,
           sources: [...selectedSources],
-          wait: true,
+          wait: false,
           limit: 25,
         }),
       });
       setRun(data.searchRun);
       setResults(data.results || []);
-      setSelectedResults(new Set((data.results || []).slice(0, 3).map((result) => result.id)));
-      setState({ loading: false, error: '' });
+      await streamSearchRun(data.searchRun.id);
     } catch (error) {
       setState({ loading: false, error: error.message });
     }
+  }
+
+  async function streamSearchRun(searchRunId) {
+    const path = `/v1/search-runs/${encodeURIComponent(searchRunId)}/events?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(userId)}`;
+    await apiStream(apiBaseUrl, path, { authToken }, ({ event, data }) => {
+      if (event === 'error' || event === 'timeout') throw new Error(data.error || 'Search stream failed');
+      if (!data.searchRun) return;
+      setRun(data.searchRun);
+      setResults(data.results || []);
+      setSelectedResults(new Set((data.results || []).slice(0, 3).map((result) => result.id)));
+      if (['completed', 'partial', 'failed'].includes(data.searchRun.status)) {
+        setState({ loading: false, error: data.searchRun.status === 'failed' ? 'Search run failed.' : '' });
+      }
+    });
   }
 
   async function runAssistant(actionType) {

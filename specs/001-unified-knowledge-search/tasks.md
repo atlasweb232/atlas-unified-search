@@ -93,6 +93,7 @@
 - [x] Return partial source statuses.
 - [x] Merge/rank/dedupe line items.
 - [x] Add polling endpoint for run status/results.
+- [x] Add authenticated SSE endpoint for partial run snapshots/results.
 - [x] Add source-agent failure isolation.
 
 ## M10: LLM And Artifact Actions

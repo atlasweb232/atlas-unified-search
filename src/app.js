@@ -355,6 +355,68 @@ export async function createApp(config) {
     }
   });
 
+  app.get('/v1/search-runs/:searchRunId/events', async (req, res) => {
+    const tenantId = req.query.tenantId || req.headers['x-tenant-id'];
+    const userId = req.query.userId || req.headers['x-user-id'];
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    }
+    await refreshStore(store);
+    const initialRun = store.getSearchRun(req.params.searchRunId);
+    if (!initialRun) return res.status(404).json({ success: false, error: 'Search run not found' });
+    if (!matchesScope(req, initialRun)) return res.status(403).json({ success: false, error: 'Forbidden' });
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders?.();
+
+    let lastUpdatedAt = '';
+    let closed = false;
+    const close = () => {
+      closed = true;
+      clearInterval(interval);
+      clearTimeout(timeout);
+      res.end();
+    };
+    const sendSnapshot = async ({ force = false } = {}) => {
+      if (closed || res.destroyed) return;
+      await refreshStore(store);
+      const run = store.getSearchRun(req.params.searchRunId);
+      if (!run || run.tenantId !== tenantId || run.userId !== userId) {
+        writeSse(res, 'error', { error: 'Search run is no longer available' });
+        close();
+        return;
+      }
+      if (force || run.updatedAt !== lastUpdatedAt) {
+        lastUpdatedAt = run.updatedAt;
+        writeSse(res, 'snapshot', { searchRun: run, results: run.results || [] });
+      }
+      if (isTerminalSearchRun(run)) {
+        writeSse(res, 'done', { searchRun: run, results: run.results || [] });
+        close();
+      }
+    };
+    const interval = setInterval(() => {
+      sendSnapshot().catch((error) => {
+        writeSse(res, 'error', { error: error.message });
+        close();
+      });
+    }, 500);
+    const timeout = setTimeout(() => {
+      writeSse(res, 'timeout', { error: 'Search run event stream timed out' });
+      close();
+    }, config.searchRun?.streamTtlMs || 300000);
+    req.on('close', close);
+    sendSnapshot({ force: true }).catch((error) => {
+      writeSse(res, 'error', { error: error.message });
+      close();
+    });
+  });
+
   app.get('/v1/search-runs/:searchRunId', async (req, res) => {
     await refreshStore(store);
     const searchRun = store.getSearchRun(req.params.searchRunId);
@@ -560,6 +622,15 @@ function matchesScope(req, row) {
   const tenantId = req.query.tenantId || req.headers['x-tenant-id'];
   const userId = req.query.userId || req.headers['x-user-id'];
   return Boolean(tenantId && userId && row.tenantId === tenantId && row.userId === userId);
+}
+
+function writeSse(res, event, data) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function isTerminalSearchRun(run) {
+  return ['completed', 'partial', 'failed'].includes(run?.status);
 }
 
 function publicIndexStatus(status) {

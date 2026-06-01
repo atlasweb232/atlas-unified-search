@@ -35,6 +35,7 @@ The unified search service is production-testable when these gates are true:
 - `/v1/webhooks/google-drive/changes` accepts Google Drive push notifications only with a valid `X-Goog-Channel-Token`, configured `X-Goog-Channel-ID`, and configured `GDRIVE_WEBHOOK_TOKEN`, `GDRIVE_WEBHOOK_CHANNEL_IDS`, `GDRIVE_EVENT_TENANT_ID`, and `GDRIVE_EVENT_USER_ID`; verified notifications still return `409` until Google Drive live readiness passes.
 - `/v1/webhooks/azure-blob/events` handles Event Grid subscription validation and accepts BlobCreated events only with configured `CONFERENCE_EVENT_GRID_TOKEN`, `CONFERENCE_EVENT_TENANT_ID`, and `CONFERENCE_EVENT_USER_ID`; verified events still return `409` until conference Blob storage readiness passes.
 - `UNIFIED_SEARCH_SOURCE_TIMEOUT_MS` is configured or defaults to 30000ms so a hung federated source-agent produces a partial search run instead of blocking the whole query.
+- `GET /v1/search-runs/{searchRunId}/events` streams authenticated SSE `snapshot` and `done` events for the tenant/user scope, and the hosted React UI consumes the stream with the bearer token in the Authorization header.
 - `UNIFIED_SEARCH_SYNC_RETRY_ATTEMPTS` and `UNIFIED_SEARCH_SYNC_RETRY_BASE_DELAY_MS` provide bounded retries for transient source sync failures while configuration/auth failures fail fast.
 - Slack and Google Drive syncs persist tenant/user-scoped checkpoints; use `forceFullSync` or `/v1/reindex/{source}` to intentionally rescan.
 - Optional `UNIFIED_SEARCH_SOURCE_PERMISSIONS` can restrict usable sources per `tenantId:userId`.
@@ -64,6 +65,5 @@ Current test boundary:
 
 Known non-blocking follow-up after the first production test:
 
-- Replace polling with SSE/WebSocket partial-result streaming.
 - Add connector-specific deletion/reindex endpoints.
 - Add Azure OpenAI provider alias if OpenAI-compatible embedding/chat endpoints are not sufficient.

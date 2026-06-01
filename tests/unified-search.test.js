@@ -34,6 +34,10 @@ function config(dataDir) {
   };
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 test('api auth boundary blocks protected endpoints when enabled', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-auth-'));
   let server;
@@ -219,6 +223,55 @@ test('search run source-agent timeout returns partial results', async () => {
   }
 });
 
+test('search run persists incremental source results before all agents finish', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-stream-progress-'));
+  try {
+    const store = new JsonSearchStore({ dataDir: dir });
+    await store.load();
+    const searchEngine = {
+      async search({ sources }) {
+        if (sources[0] === 'slow') await sleep(80);
+        return [{
+          id: `doc-${sources[0]}`,
+          tenantId: 'atlasweb',
+          userId: 'rakib',
+          source: sources[0],
+          title: `${sources[0]} result`,
+          summary: `${sources[0]} source completed`,
+          body: `${sources[0]} source completed`,
+          score: sources[0] === 'fast' ? 0.9 : 0.8,
+          metadata: {},
+          children: [],
+        }];
+      },
+    };
+    const registry = { get() { return {}; } };
+    const coordinator = new SearchRunCoordinator({ store, searchEngine, registry, sourceTimeoutMs: 500 });
+    const accepted = await coordinator.start({
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      query: 'stream progress',
+      sources: ['fast', 'slow'],
+      wait: false,
+      limit: 10,
+    });
+
+    await sleep(30);
+    const inProgress = store.getSearchRun(accepted.id);
+    assert.equal(inProgress.status, 'running');
+    assert.ok(inProgress.results.some((result) => result.source === 'fast'));
+    assert.ok(!inProgress.results.some((result) => result.source === 'slow'));
+
+    await sleep(120);
+    const completed = store.getSearchRun(accepted.id);
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.results.length, 2);
+    assert.ok(completed.sourceStatuses.every((status) => status.status === 'completed'));
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
 test('job runner retries transient sync failures and does not retry configuration failures', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-retry-'));
   try {
@@ -381,6 +434,14 @@ test('unified search indexes fixture documents across all connector types', asyn
     assert.ok(run.searchRun.sourceStatuses.some((status) => status.source === 'email' && status.searchMode === 'federated_unconfigured'));
     assert.ok(run.results.some((result) => result.source === 'conference_bridge'));
     assert.ok(run.results.every((result) => result.sourceIcon && result.sourceLabel));
+
+    const stream = await fetch(`${base}/v1/search-runs/${run.searchRun.id}/events?tenantId=${tenantId}&userId=${userId}`);
+    assert.equal(stream.status, 200);
+    assert.match(stream.headers.get('content-type') || '', /text\/event-stream/);
+    const streamText = await stream.text();
+    assert.match(streamText, /event: snapshot/);
+    assert.match(streamText, /event: done/);
+    assert.match(streamText, /calendar endpoint cleanup/);
 
     const selectedResultIds = run.results.slice(0, 2).map((result) => result.id);
     const summary = await post(base, '/v1/assistant/actions', {

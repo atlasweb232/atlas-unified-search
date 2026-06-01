@@ -19,6 +19,49 @@ export async function apiRequest(apiBaseUrl, path, options = {}) {
   return data;
 }
 
+export async function apiStream(apiBaseUrl, path, options = {}, onEvent) {
+  const authToken = options.authToken || localStorage.getItem('atlas_unified_search_auth_token') || '';
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    headers: {
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      ...(options.headers || {}),
+    },
+  });
+  if (!response.ok || !response.body) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(formatApiError(data));
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split('\n\n');
+    buffer = events.pop() || '';
+    for (const eventText of events) {
+      const event = parseSseEvent(eventText);
+      if (event) onEvent(event);
+    }
+  }
+  if (buffer.trim()) {
+    const event = parseSseEvent(buffer);
+    if (event) onEvent(event);
+  }
+}
+
+function parseSseEvent(text) {
+  const lines = String(text || '').split('\n');
+  const event = lines.find((line) => line.startsWith('event:'))?.slice('event:'.length).trim() || 'message';
+  const data = lines
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice('data:'.length).trim())
+    .join('\n');
+  if (!data) return null;
+  return { event, data: JSON.parse(data) };
+}
+
 function formatApiError(data) {
   const message = data.error || data.message || 'Request failed';
   const missing = Array.isArray(data.details?.missing) && data.details.missing.length

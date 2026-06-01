@@ -67,5 +67,4 @@ the new watch values and rerun the audit/status commands above.
 
 ## Remaining Enhancements
 
-- Add SSE or WebSocket streaming for partial search-run results.
 - Add WorkOS/Nango token provider for multi-user connector onboarding.

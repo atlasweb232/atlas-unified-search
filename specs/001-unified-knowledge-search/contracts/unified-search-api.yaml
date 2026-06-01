@@ -51,6 +51,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SearchRunResponse"
+  /v1/search-runs/{searchRunId}/events:
+    get:
+      summary: Stream search run snapshots with Server-Sent Events
+      description: >
+        Authenticated SSE stream for the current tenant/user scope. Emits
+        `snapshot` events whenever source-agent status or partial results
+        change, followed by `done` when the run reaches completed, partial, or
+        failed. Clients must pass tenantId and userId as query parameters or
+        scope headers; bearer auth remains in the Authorization header.
+      parameters:
+        - name: searchRunId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: tenantId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Event stream of search run snapshots
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "403":
+          description: Search run does not belong to the requested tenant/user
   /v1/connectors:
     get:
       summary: List connector status for the current user

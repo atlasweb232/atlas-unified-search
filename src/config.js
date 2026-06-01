@@ -57,6 +57,7 @@ export function loadConfig() {
     sourcePermissions: json('UNIFIED_SEARCH_SOURCE_PERMISSIONS', {}),
     searchRun: {
       sourceTimeoutMs: number('UNIFIED_SEARCH_SOURCE_TIMEOUT_MS', 30000),
+      streamTtlMs: number('UNIFIED_SEARCH_STREAM_TTL_MS', 300000),
     },
     syncRetry: {
       maxAttempts: number('UNIFIED_SEARCH_SYNC_RETRY_ATTEMPTS', 3),

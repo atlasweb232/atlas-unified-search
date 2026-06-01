@@ -25,14 +25,18 @@ export class SearchRunCoordinator {
   }
 
   async execute(runId, { tenantId, userId, query, selectedSources, filters, limit }) {
-    this.store.updateSearchRun(runId, { status: 'running' });
+    await persistStoreMutation(this.store, () => {
+      this.store.updateSearchRun(runId, { status: 'running' });
+    });
     const settled = await Promise.allSettled(selectedSources.map(async (source) => {
       const connector = this.registry?.get(source);
       const sourceContext = describeSourceSearch(connector);
-      this.store.updateSourceStatus(runId, source, {
-        status: 'running',
-        startedAt: new Date().toISOString(),
-        ...sourceContext,
+      await persistStoreMutation(this.store, () => {
+        this.store.updateSourceStatus(runId, source, {
+          status: 'running',
+          startedAt: new Date().toISOString(),
+          ...sourceContext,
+        });
       });
       const results = await withTimeout(
         source,
@@ -45,7 +49,15 @@ export class SearchRunCoordinator {
         },
       );
       const lineItems = results.map((result) => normalizeLineItem(runId, result));
-      this.store.updateSourceStatus(runId, source, { status: 'completed', completedAt: new Date().toISOString(), resultCount: lineItems.length, ...sourceContext });
+      await persistStoreMutation(this.store, () => {
+        this.store.updateSourceStatus(runId, source, {
+          status: 'completed',
+          completedAt: new Date().toISOString(),
+          resultCount: lineItems.length,
+          ...sourceContext,
+        });
+        appendRunResults(this.store, runId, lineItems, limit);
+      });
       return { lineItems, sourceContext };
     }));
     const results = [];
@@ -64,7 +76,9 @@ export class SearchRunCoordinator {
         });
       } else {
         const error = result.reason?.message || 'Search failed';
-        this.store.updateSourceStatus(runId, source, { status: 'failed', completedAt: new Date().toISOString(), error: result.reason?.message || 'Search failed' });
+        await persistStoreMutation(this.store, () => {
+          this.store.updateSourceStatus(runId, source, { status: 'failed', completedAt: new Date().toISOString(), error });
+        });
         finalSourceStatuses.push({
           source,
           status: 'failed',
@@ -93,6 +107,26 @@ export class SearchRunCoordinator {
       ? this.store.withStoreLock(completeRun)
       : completeRun();
   }
+}
+
+async function persistStoreMutation(store, mutation) {
+  const apply = async () => {
+    mutation();
+    await store.save();
+  };
+  return typeof store.withStoreLock === 'function'
+    ? store.withStoreLock(apply)
+    : apply();
+}
+
+function appendRunResults(store, runId, lineItems, limit) {
+  if (!lineItems.length) return;
+  const run = store.getSearchRun(runId);
+  if (!run) return;
+  const results = dedupe([...(run.results || []), ...lineItems])
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit);
+  store.updateSearchRun(runId, { results });
 }
 
 function normalizeLineItem(searchRunId, result) {
