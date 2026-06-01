@@ -154,6 +154,27 @@ paths:
           description: Missing or invalid Google Drive channel token/id
         "409":
           description: Google Drive connector is not ready for live event ingestion
+  /v1/webhooks/azure-blob/events:
+    post:
+      summary: Accept verified Azure Blob Event Grid notifications
+      description: >
+        Public Azure Event Grid ingress for conference bridge BlobCreated
+        events. This endpoint bypasses Atlas bearer auth only after verifying
+        X-Atlas-Event-Grid-Token, or the token query parameter, with
+        CONFERENCE_EVENT_GRID_TOKEN. Subscription validation events return the
+        required validationResponse. BlobCreated events are mapped to
+        CONFERENCE_EVENT_TENANT_ID and CONFERENCE_EVENT_USER_ID, checked against
+        CONFERENCE_BLOB_CONTAINERS, then use the same source permission,
+        readiness, audit, and queue path as /v1/events/conference_bridge.
+      responses:
+        "200":
+          description: Event Grid subscription validation response
+        "202":
+          description: Verified BlobCreated notification accepted and sync queued
+        "401":
+          description: Missing or invalid Event Grid token
+        "409":
+          description: Conference bridge connector is not ready for live event ingestion
   /v1/reindex/{source}:
     post:
       summary: Delete scoped source data, reset source checkpoints, and start a full source sync

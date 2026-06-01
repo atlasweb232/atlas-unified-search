@@ -23,6 +23,7 @@ const secretInputs = [
   ['GOOGLE_REFRESH_TOKEN', 'google-refresh-token'],
   ['GOOGLE_SERVICE_ACCOUNT_JSON', 'google-service-account-json'],
   ['GDRIVE_WEBHOOK_TOKEN', 'gdrive-webhook-token'],
+  ['CONFERENCE_EVENT_GRID_TOKEN', 'conference-event-grid-token'],
   ['DATA_FABRIC_API_TOKEN', 'data-fabric-api-token'],
 ];
 
@@ -37,6 +38,8 @@ const valueInputs = [
   'DATA_FABRIC_BASE_URL',
   'DATA_FABRIC_READINESS_PATH',
   'DATA_FABRIC_RECORDS_PATH',
+  'CONFERENCE_EVENT_TENANT_ID',
+  'CONFERENCE_EVENT_USER_ID',
 ];
 
 const configured = [];

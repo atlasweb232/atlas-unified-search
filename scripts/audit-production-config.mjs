@@ -61,6 +61,9 @@ const report = {
       groupGate('conference_bridge', [
         envGate(apiEnv, 'AZURE_STORAGE_CONNECTION_STRING', 'secretRef'),
         envGate(apiEnv, 'CONFERENCE_BLOB_CONTAINERS', 'value'),
+        envGate(apiEnv, 'CONFERENCE_EVENT_GRID_TOKEN', 'secretRef'),
+        envGate(apiEnv, 'CONFERENCE_EVENT_TENANT_ID', 'value'),
+        envGate(apiEnv, 'CONFERENCE_EVENT_USER_ID', 'value'),
         envGate(workerEnv, 'AZURE_STORAGE_CONNECTION_STRING', 'secretRef', 'worker'),
         envGate(workerEnv, 'CONFERENCE_BLOB_CONTAINERS', 'value', 'worker'),
       ]),

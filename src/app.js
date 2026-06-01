@@ -154,6 +154,61 @@ export async function createApp(config) {
     }
   });
 
+  app.post('/v1/webhooks/azure-blob/events', async (req, res) => {
+    const verification = verifyAzureBlobWebhook(config, req);
+    if (!verification.ok) {
+      return res.status(verification.status).json({ success: false, error: verification.error });
+    }
+    const events = Array.isArray(req.body) ? req.body : [req.body].filter(Boolean);
+    const validationEvent = events.find((event) => event?.eventType === 'Microsoft.EventGrid.SubscriptionValidationEvent');
+    if (validationEvent) {
+      return res.json({ validationResponse: validationEvent.data?.validationCode || '' });
+    }
+    const tenantId = config.conference?.eventTenantId || '';
+    const userId = config.conference?.eventUserId || '';
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'CONFERENCE_EVENT_TENANT_ID and CONFERENCE_EVENT_USER_ID are required for Azure Blob events' });
+    }
+    const accepted = [];
+    try {
+      for (const event of events.filter((item) => item?.eventType === 'Microsoft.Storage.BlobCreated')) {
+        const blob = parseBlobEventSubject(event.subject || event.data?.url || '');
+        if (!blob.container || !blob.blobName) continue;
+        if (config.conference?.containers?.length && !config.conference.containers.includes(blob.container)) {
+          const error = new Error(`Conference blob container is not enabled: ${blob.container}`);
+          error.statusCode = 403;
+          throw error;
+        }
+        const result = await enqueueConnectorEvent({
+          config,
+          registry,
+          store,
+          jobs,
+          source: 'conference_bridge',
+          tenantId,
+          userId,
+          event: {
+            type: event.eventType,
+            event_id: event.id || '',
+            prefix: blob.blobName,
+            blobPrefix: blob.blobName,
+            container: blob.container,
+            resourceId: event.topic || '',
+          },
+          options: {},
+          wait: false,
+        });
+        accepted.push({ job: result.job, eventTrigger: result.eventTrigger });
+      }
+      if (!accepted.length) {
+        return res.status(202).json({ success: true, accepted: 0, skipped: events.length });
+      }
+      return res.status(202).json({ success: true, accepted: accepted.length, results: accepted });
+    } catch (error) {
+      return res.status(error.statusCode || 400).json({ success: false, error: error.message, details: error.details || undefined });
+    }
+  });
+
   app.get('/v1/production-readiness', async (req, res) => {
     try {
       await refreshStore(store);
@@ -515,6 +570,23 @@ function verifyGoogleDriveWebhook(config, req) {
   const resourceId = String(req.headers['x-goog-resource-id'] || '');
   if (!resourceId) return { ok: false, status: 400, error: 'Missing Google Drive resource id' };
   return { ok: true };
+}
+
+function verifyAzureBlobWebhook(config, req) {
+  const expectedToken = config.conference?.eventGridToken || '';
+  if (!expectedToken) return { ok: false, status: 503, error: 'CONFERENCE_EVENT_GRID_TOKEN is not configured' };
+  const token = String(req.headers['x-atlas-event-grid-token'] || req.query?.token || '');
+  if (!constantTimeEquals(token, expectedToken)) return { ok: false, status: 401, error: 'Invalid Azure Event Grid token' };
+  return { ok: true };
+}
+
+function parseBlobEventSubject(value) {
+  const text = decodeURIComponent(String(value || ''));
+  let match = text.match(/\/containers\/([^/]+)\/blobs\/(.+)$/);
+  if (match) return { container: match[1], blobName: match[2] };
+  match = text.match(/https?:\/\/[^/]+\/([^/?#]+)\/([^?#]+)/);
+  if (match) return { container: match[1], blobName: match[2] };
+  return { container: '', blobName: '' };
 }
 
 function constantTimeEquals(left, right) {

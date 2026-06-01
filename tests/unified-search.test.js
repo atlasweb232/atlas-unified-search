@@ -25,7 +25,7 @@ function config(dataDir) {
     slack: { botToken: '', channelIds: [], limit: 10, signingSecret: '', eventTenantId: '', eventUserId: '' },
     gdrive: { clientId: '', clientSecret: '', refreshToken: '', serviceAccountJson: '', folderIds: [], limit: 10, webhookToken: '', webhookChannelIds: [], eventTenantId: '', eventUserId: '' },
     email: { baseUrl: '', sessionId: '', limit: 10 },
-    conference: { azureStorageConnectionString: '', containers: [] },
+    conference: { azureStorageConnectionString: '', containers: [], eventGridToken: '', eventTenantId: '', eventUserId: '' },
     knowledgeBase: { root: '' },
     dataFabric: { baseUrl: '', apiToken: '', readinessPath: '/health', recordsPath: '/records' },
   };
@@ -638,6 +638,78 @@ test('google drive changes webhook verifies channel token and keeps live readine
     assert.equal(blockedBody.details.source, 'google_drive');
     assert.ok(blockedBody.details.missing.includes('GOOGLE_SERVICE_ACCOUNT_JSON'));
     assert.ok(blockedBody.details.missing.includes('GOOGLE_REFRESH_TOKEN'));
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
+test('azure blob event grid webhook validates token and handles scoped conference events', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-blob-webhook-'));
+  let server;
+  try {
+    const app = await createApp({
+      ...config(dir),
+      auth: { required: true, token: 'api-token' },
+      conference: {
+        azureStorageConnectionString: '',
+        containers: ['conference-transcripts'],
+        eventGridToken: 'event-grid-token',
+        eventTenantId: 'atlasweb',
+        eventUserId: 'rakib',
+      },
+    });
+    server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+
+    const unauthenticatedConnector = await fetch(`${base}/v1/connectors`);
+    assert.equal(unauthenticatedConnector.status, 401);
+
+    const unsigned = await fetch(`${base}/v1/webhooks/azure-blob/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([]),
+    });
+    assert.equal(unsigned.status, 401);
+
+    const validation = await fetch(`${base}/v1/webhooks/azure-blob/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Atlas-Event-Grid-Token': 'event-grid-token' },
+      body: JSON.stringify([{
+        eventType: 'Microsoft.EventGrid.SubscriptionValidationEvent',
+        data: { validationCode: 'validation-code' },
+      }]),
+    });
+    assert.equal(validation.status, 200);
+    assert.deepEqual(await validation.json(), { validationResponse: 'validation-code' });
+
+    const wrongContainer = await fetch(`${base}/v1/webhooks/azure-blob/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Atlas-Event-Grid-Token': 'event-grid-token' },
+      body: JSON.stringify([{
+        id: 'blob-event-1',
+        eventType: 'Microsoft.Storage.BlobCreated',
+        subject: '/blobServices/default/containers/not-enabled/blobs/smoke/transcript.txt',
+      }]),
+    });
+    assert.equal(wrongContainer.status, 403);
+
+    const blocked = await fetch(`${base}/v1/webhooks/azure-blob/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Atlas-Event-Grid-Token': 'event-grid-token' },
+      body: JSON.stringify([{
+        id: 'blob-event-2',
+        topic: '/subscriptions/test/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/acct',
+        eventType: 'Microsoft.Storage.BlobCreated',
+        subject: '/blobServices/default/containers/conference-transcripts/blobs/smoke/transcript.txt',
+      }]),
+    });
+    assert.equal(blocked.status, 409);
+    const blockedBody = await blocked.json();
+    assert.equal(blockedBody.details.source, 'conference_bridge');
+    assert.ok(blockedBody.details.missing.includes('AZURE_STORAGE_CONNECTION_STRING'));
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     await new Promise((resolve) => setTimeout(resolve, 25));

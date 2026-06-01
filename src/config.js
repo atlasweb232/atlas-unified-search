@@ -105,6 +105,9 @@ export function loadConfig() {
     conference: {
       azureStorageConnectionString: process.env.AZURE_STORAGE_CONNECTION_STRING || '',
       containers: list('CONFERENCE_BLOB_CONTAINERS'),
+      eventGridToken: process.env.CONFERENCE_EVENT_GRID_TOKEN || '',
+      eventTenantId: process.env.CONFERENCE_EVENT_TENANT_ID || '',
+      eventUserId: process.env.CONFERENCE_EVENT_USER_ID || '',
     },
     knowledgeBase: {
       root: process.env.KNOWLEDGE_BASE_ROOT || '',

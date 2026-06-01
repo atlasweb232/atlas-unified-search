@@ -249,6 +249,17 @@ Drive notifications, verifies `X-Goog-Channel-Token` against
 path internally. It still returns `409` until Google Drive OAuth or
 service-account credentials pass live readiness.
 
-Blob Event Grid and future tenant onboarding services should continue to call
-`/v1/events/:source` with the unified search API token unless they get their own
-provider-specific verified ingress.
+Azure Blob Event Grid can call `/v1/webhooks/azure-blob/events` directly for
+conference bridge transcript containers. Configure the Event Grid subscription
+delivery property/header `X-Atlas-Event-Grid-Token` to match
+`CONFERENCE_EVENT_GRID_TOKEN`, and set `CONFERENCE_EVENT_TENANT_ID` /
+`CONFERENCE_EVENT_USER_ID` for the tenant/user scope. The endpoint handles
+`Microsoft.EventGrid.SubscriptionValidationEvent`, accepts
+`Microsoft.Storage.BlobCreated`, verifies the blob container is listed in
+`CONFERENCE_BLOB_CONTAINERS`, and enqueues a prefix-scoped conference bridge
+sync. It still returns `409` until `AZURE_STORAGE_CONNECTION_STRING` and
+`CONFERENCE_BLOB_CONTAINERS` pass live readiness.
+
+Future tenant onboarding services should continue to call `/v1/events/:source`
+with the unified search API token unless they get their own provider-specific
+verified ingress.
