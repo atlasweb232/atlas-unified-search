@@ -52,10 +52,12 @@ and the visual layer of conference video search.
 - **Two named vector spaces minimum:** `text` and `vision`. Audio transcript
   segments live in `text` (transcript text is embedded as text). A third
   `audio` space (CLAP-style raw audio embeddings) is a future extension.
-- **Spaces are stored separately:** either separate columns
-  (`embedding_text`, `embedding_vision`) on `unified_chunks`, or a separate
-  `unified_chunk_vectors` table keyed by `(chunk_id, space)`. Decision in
-  `research.md`.
+- **Primary store is Qdrant named vectors** (decision updated): text and vision
+  vectors are named vectors on the *same point* in a per-tenant Qdrant
+  collection (see `006`/`007`). The pgvector two-column layout
+  (`embedding_text`, `embedding_vision` on `unified_chunks`) remains the
+  **dev/fallback** `VectorStore` adapter only. Both satisfy the same
+  `VectorStore` interface from `006`.
 - **Cross-space search fusion:** a query may search one space, multiple spaces,
   or all spaces; per-space ANN scores are normalised and merged before hybrid
   re-rank.

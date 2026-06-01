@@ -87,9 +87,12 @@ at the current implementation on branch
 - No new connectors, sources, assistant actions, or UI panels.
 - No live Slack/Google/Azure account validation (remains gated by
   `checkReadiness`, out of scope here).
-- No switch away from Postgres/pgvector to Azure AI Search or Qdrant (the
-  `001` open question stays open; this feature commits to making the
-  pgvector path real first).
+- This feature makes the **pgvector** retrieval path real and scoped as the
+  baseline/dev store. The production vector backend decision is **Qdrant**
+  (see `005`/`006`/`007`); pgvector remains the dev/fallback `VectorStore`
+  adapter. Entity-level (per-tenant) physical segregation is specified in
+  `007` (silo: Qdrant collection-per-tenant + Postgres schema-per-tenant);
+  `002` delivers the row-level/identity scoping that every model builds on.
 - No change to the connector normalization shape (`SearchDocument` /
   `SearchChunk` fields stay as defined in `001/data-model.md`).
 - No new public blob URL exposure.

@@ -36,6 +36,13 @@ monolith.
   abstraction — receiver side made framework-agnostic for local-dev parity.
 - **No behaviour changes.** This is a structural refactor. Every existing test
   must pass unchanged. API response shapes are identical.
+- **Primary adapters (decision updated):** the production `VectorStore` is
+  **Qdrant** (named vectors, per-tenant collection — `005`/`007`), with
+  pgvector + JSON as dev/fallback adapters; the production `Queue` is
+  **Kafka-compatible** (`008`), with Service Bus / BullMQ / inline as
+  alternative adapters. The interfaces are unchanged — only which concrete
+  adapter is "primary" is now decided. Qdrant and Kafka are therefore real
+  implementations, not stubs, once `007`/`008` land.
 - **Incremental migration.** Packages are extracted one at a time; `src/` files
   become thin re-exports of the new packages during the transition so nothing
   breaks mid-flight.
