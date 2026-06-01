@@ -4,6 +4,7 @@ const resourceGroup = process.env.RESOURCE_GROUP || 'atlas-azure-backend-rg';
 const apiAppName = process.env.APP_NAME || 'atlas-unified-search';
 const workerAppName = process.env.WORKER_APP_NAME || 'atlas-unified-search-worker';
 const schedulerAppName = process.env.SCHEDULER_APP_NAME || 'atlas-unified-search-scheduler';
+const retentionSchedulerAppName = process.env.RETENTION_SCHEDULER_APP_NAME || 'atlas-search-retention-sched';
 const serviceBusNamespace = process.env.SERVICE_BUS_NAMESPACE || 'atlas-reg-sb-2ba6c25e';
 const serviceBusQueue = process.env.SERVICE_BUS_SYNC_QUEUE_NAME || 'unified-search-sync';
 const authToken = process.env.UNIFIED_SEARCH_AUTH_TOKEN || '';
@@ -15,6 +16,7 @@ const requireWebhookIngress = list(process.env.STATUS_REQUIRE_WEBHOOK_INGRESS);
 const apiApp = loadContainerApp(apiAppName);
 const workerApp = loadContainerApp(workerAppName);
 const schedulerApp = loadContainerApp(schedulerAppName, { optional: true });
+const retentionSchedulerApp = loadContainerApp(retentionSchedulerAppName, { optional: true });
 const baseUrl = (process.env.UNIFIED_SEARCH_BASE_URL || `https://${apiApp.properties?.configuration?.ingress?.fqdn || ''}`).replace(/\/$/, '');
 
 const [health, queue] = await Promise.all([
@@ -33,6 +35,7 @@ const report = {
     api: summarizeApp(apiApp),
     worker: summarizeApp(workerApp),
     scheduler: schedulerApp ? summarizeApp(schedulerApp) : { name: schedulerAppName, present: false },
+    retentionScheduler: retentionSchedulerApp ? summarizeApp(retentionSchedulerApp) : { name: retentionSchedulerAppName, present: false },
   },
   queue,
   publicHealth: summarizeHealth(health),

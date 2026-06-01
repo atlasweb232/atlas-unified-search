@@ -19,6 +19,8 @@ already have backend credentials/storage configured.
 - Scheduler support for `action: retention_cleanup`, using the API-backed
   scheduler in Azure or the direct-store scheduler for intentionally privileged
   deployments
+- Dedicated Azure dry-run retention scheduler app:
+  `atlas-search-retention-sched`
 - Federated email search through the existing Atlas email vector search service
 - Conference bridge Blob indexing
 - Knowledge base indexing from packaged `/app/docs`
