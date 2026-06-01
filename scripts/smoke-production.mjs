@@ -11,16 +11,31 @@ const configuredEmailSmokeUserId = process.env.UNIFIED_SEARCH_SMOKE_EMAIL_USER_I
 const emailSmokeQuery = process.env.UNIFIED_SEARCH_SMOKE_EMAIL_QUERY || 'readiness';
 const requireEmailResults = truthy(process.env.UNIFIED_SEARCH_SMOKE_REQUIRE_EMAIL_RESULTS || '');
 const requiredLiveSources = listEnv('UNIFIED_SEARCH_SMOKE_REQUIRE_LIVE_SOURCES');
+const requestTimeoutMs = Number(process.env.UNIFIED_SEARCH_SMOKE_REQUEST_TIMEOUT_MS || 180000);
 
 async function request(path, options = {}) {
-  const response = await fetch(`${base}${path}`, {
-    ...options,
-    headers: {
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(options.auth === false ? {} : { Authorization: `Bearer ${token}` }),
-      ...(options.headers || {}),
-    },
-  });
+  const timeoutMs = options.timeoutMs || requestTimeoutMs;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(`${base}${path}`, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.auth === false ? {} : { Authorization: `Bearer ${token}` }),
+        ...(options.headers || {}),
+      },
+    });
+  } catch (error) {
+    if (error.name === 'AbortError' || controller.signal.aborted) {
+      throw new Error(`production smoke request timeout: ${path} after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   const text = await response.text();
   let data;
   try {
