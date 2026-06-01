@@ -83,8 +83,9 @@ To preview the exact apps and image without updating Azure:
 DRY_RUN=true IMAGE_TAG='202606010132-ui-auth-boundary-620c625' npm run azure:promote-image
 ```
 
-Set `PROMOTE_SCHEDULER=true` only when the scheduler should move to the same
-image at the same time. The default promotes the API and worker only.
+Set `PROMOTE_SCHEDULER=true` and/or `PROMOTE_RETENTION_SCHEDULER=true` when
+the scheduler apps should move to the same image at the same time. The default
+promotes the API and worker only.
 
 Optional scheduled sync process:
 
