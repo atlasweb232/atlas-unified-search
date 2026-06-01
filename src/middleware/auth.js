@@ -4,6 +4,7 @@ export function requireApiAuth(config) {
   return (req, res, next) => {
     if (req.path === '/v1/health') return next();
     if (req.path === '/v1/webhooks/slack/events') return next();
+    if (req.path === '/v1/webhooks/google-drive/changes') return next();
     if (!req.path.startsWith('/v1/')) return next();
     if (!config.auth?.required) return next();
 

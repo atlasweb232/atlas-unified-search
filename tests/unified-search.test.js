@@ -23,7 +23,7 @@ function config(dataDir) {
     serviceBus: { connectionString: '', syncQueueName: 'unified-search-sync' },
     artifacts: { azureStorageConnectionString: '', container: 'unified-search-artifacts', publicBaseUrl: '' },
     slack: { botToken: '', channelIds: [], limit: 10, signingSecret: '', eventTenantId: '', eventUserId: '' },
-    gdrive: { clientId: '', clientSecret: '', refreshToken: '', serviceAccountJson: '', folderIds: [], limit: 10 },
+    gdrive: { clientId: '', clientSecret: '', refreshToken: '', serviceAccountJson: '', folderIds: [], limit: 10, webhookToken: '', webhookChannelIds: [], eventTenantId: '', eventUserId: '' },
     email: { baseUrl: '', sessionId: '', limit: 10 },
     conference: { azureStorageConnectionString: '', containers: [] },
     knowledgeBase: { root: '' },
@@ -590,6 +590,61 @@ test('slack events webhook verifies signatures and uses readiness-gated scoped e
   }
 });
 
+test('google drive changes webhook verifies channel token and keeps live readiness gate', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-gdrive-webhook-'));
+  let server;
+  try {
+    const app = await createApp({
+      ...config(dir),
+      auth: { required: true, token: 'api-token' },
+      gdrive: {
+        clientId: '',
+        clientSecret: '',
+        refreshToken: '',
+        serviceAccountJson: '',
+        folderIds: [],
+        limit: 10,
+        webhookToken: 'drive-webhook-token',
+        webhookChannelIds: ['channel-1'],
+        eventTenantId: 'atlasweb',
+        eventUserId: 'rakib',
+      },
+    });
+    server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+
+    const unauthenticatedConnector = await fetch(`${base}/v1/connectors`);
+    assert.equal(unauthenticatedConnector.status, 401);
+
+    const missingToken = await fetch(`${base}/v1/webhooks/google-drive/changes`, {
+      method: 'POST',
+      headers: googleDriveWebhookHeaders({ token: '', channelId: 'channel-1', resourceId: 'resource-1' }),
+    });
+    assert.equal(missingToken.status, 401);
+
+    const unexpectedChannel = await fetch(`${base}/v1/webhooks/google-drive/changes`, {
+      method: 'POST',
+      headers: googleDriveWebhookHeaders({ token: 'drive-webhook-token', channelId: 'channel-2', resourceId: 'resource-1' }),
+    });
+    assert.equal(unexpectedChannel.status, 401);
+
+    const blocked = await fetch(`${base}/v1/webhooks/google-drive/changes`, {
+      method: 'POST',
+      headers: googleDriveWebhookHeaders({ token: 'drive-webhook-token', channelId: 'channel-1', resourceId: 'resource-1' }),
+    });
+    assert.equal(blocked.status, 409);
+    const blockedBody = await blocked.json();
+    assert.equal(blockedBody.details.source, 'google_drive');
+    assert.ok(blockedBody.details.missing.includes('GOOGLE_SERVICE_ACCOUNT_JSON'));
+    assert.ok(blockedBody.details.missing.includes('GOOGLE_REFRESH_TOKEN'));
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
 test('reindex keeps existing source data when live connector readiness fails', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-reindex-gate-'));
   let server;
@@ -823,4 +878,15 @@ function jsonResponse(body, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+function googleDriveWebhookHeaders({ token, channelId, resourceId }) {
+  return {
+    'X-Goog-Channel-Token': token,
+    'X-Goog-Channel-ID': channelId,
+    'X-Goog-Resource-ID': resourceId,
+    'X-Goog-Resource-State': 'update',
+    'X-Goog-Changed': 'content',
+    'X-Goog-Message-Number': '1',
+  };
 }

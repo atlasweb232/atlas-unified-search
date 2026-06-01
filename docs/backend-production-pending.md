@@ -17,9 +17,9 @@ already have backend credentials/storage configured.
 - Federated email search through the existing Atlas email vector search service
 - Conference bridge Blob indexing
 - Knowledge base indexing from packaged `/app/docs`
-- Authenticated `/v1/events/{source}` path plus verified Slack Events API
-  webhook ingress that maps provider notifications to readiness-gated,
-  tenant/user-scoped sync jobs
+- Authenticated `/v1/events/{source}` path plus verified Slack Events API and
+  Google Drive Changes webhook ingress that maps provider notifications to
+  readiness-gated, tenant/user-scoped sync jobs
 - Bounded sync retry policy for transient provider failures with `sync_retry`
   audit events; missing configuration and auth/permission failures fail fast
 - Fixture-tested Slack-shaped ingestion through API, queue, worker, vector
@@ -53,8 +53,8 @@ UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production
 
 ## Remaining Enhancements
 
-- Add provider-specific webhook front doors for Google Drive Changes/watch and
-  Azure Blob Event Grid that verify provider signatures and forward normalized
-  events into `/v1/events/{source}`.
+- Add provider-specific webhook front door for Azure Blob Event Grid that
+  verifies provider signatures and forwards normalized events into
+  `/v1/events/{source}`.
 - Add SSE or WebSocket streaming for partial search-run results.
 - Add WorkOS/Nango token provider for multi-user connector onboarding.

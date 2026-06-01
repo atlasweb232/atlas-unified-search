@@ -89,6 +89,10 @@ export function loadConfig() {
       serviceAccountJson: process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '',
       folderIds: list('GDRIVE_FOLDER_IDS'),
       limit: number('GDRIVE_SYNC_LIMIT', 50),
+      webhookToken: process.env.GDRIVE_WEBHOOK_TOKEN || '',
+      webhookChannelIds: list('GDRIVE_WEBHOOK_CHANNEL_IDS'),
+      eventTenantId: process.env.GDRIVE_EVENT_TENANT_ID || '',
+      eventUserId: process.env.GDRIVE_EVENT_USER_ID || '',
     },
     email: {
       baseUrl: process.env.EMAIL_CONNECTOR_BASE_URL || '',

@@ -134,6 +134,26 @@ paths:
           description: Missing, invalid, or stale Slack signature
         "409":
           description: Slack connector is not ready for live event ingestion
+  /v1/webhooks/google-drive/changes:
+    post:
+      summary: Accept verified Google Drive push notifications
+      description: >
+        Public Google Drive Changes/watch ingress. This endpoint bypasses Atlas
+        bearer auth only after verifying X-Goog-Channel-Token with
+        GDRIVE_WEBHOOK_TOKEN and, when configured, X-Goog-Channel-ID against
+        GDRIVE_WEBHOOK_CHANNEL_IDS. Notifications are mapped to
+        GDRIVE_EVENT_TENANT_ID and GDRIVE_EVENT_USER_ID, then use the same
+        source permission, readiness, audit, and queue path as
+        /v1/events/google_drive. Google Drive push notifications do not provide
+        an HMAC signature, so the channel token must be unguessable and stored
+        backend-side.
+      responses:
+        "202":
+          description: Verified Google Drive notification accepted and sync queued
+        "401":
+          description: Missing or invalid Google Drive channel token/id
+        "409":
+          description: Google Drive connector is not ready for live event ingestion
   /v1/reindex/{source}:
     post:
       summary: Delete scoped source data, reset source checkpoints, and start a full source sync

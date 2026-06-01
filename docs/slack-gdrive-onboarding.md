@@ -125,7 +125,24 @@ GOOGLE_REFRESH_TOKEN=...
 GDRIVE_FOLDER_IDS=<optional comma-separated folder ids>
 ```
 
-6. Validate credentials before wiring them into Azure:
+6. For near-real-time Google Drive push notifications, create a watch channel
+   with an unguessable token and set the webhook URL to
+   `https://<unified-search-host>/v1/webhooks/google-drive/changes`. Store the
+   channel token and tenant/user mapping backend-side:
+
+```bash
+GDRIVE_WEBHOOK_TOKEN=<unguessable channel token>
+GDRIVE_WEBHOOK_CHANNEL_IDS=<optional comma-separated channel ids>
+GDRIVE_EVENT_TENANT_ID=atlasweb
+GDRIVE_EVENT_USER_ID=rakib.mahmood@tridentinter.io
+```
+
+Google Drive push notifications do not include an HMAC signature. The endpoint
+therefore requires `X-Goog-Channel-Token` to match `GDRIVE_WEBHOOK_TOKEN` and,
+when configured, `X-Goog-Channel-ID` to be present in
+`GDRIVE_WEBHOOK_CHANNEL_IDS`.
+
+7. Validate credentials before wiring them into Azure:
 
 ```bash
 export VALIDATE_CONNECTOR_SOURCES='google_drive'
@@ -137,7 +154,7 @@ The validator performs Drive auth and a one-file `files.list` probe. It reports
 whether the configured folder scope can see at least one file, without printing
 OAuth or service-account secret values.
 
-7. Wire credentials into the Azure API and worker apps:
+8. Wire credentials into the Azure API and worker apps:
 
 ```bash
 export RESOURCE_GROUP='atlas-azure-backend-rg'
@@ -165,7 +182,7 @@ Azure Container Apps are updated. If OAuth returns `invalid_client`,
 wiring the bad secret refs into production. Dry-run mode prints the redacted
 Azure changes that would be applied without updating either Container App.
 
-8. Start a live sync:
+9. Start a live sync:
 
 ```bash
 curl -X POST "$UNIFIED_SEARCH_BASE_URL/v1/reindex/google_drive" \
@@ -221,6 +238,17 @@ Other provider webhook receivers should verify provider signatures, map the
 provider payload to `{ tenantId, userId, event, options }`, and call
 `/v1/events/:source` with the unified search API token. The event endpoint does
 not accept fixture bypasses and still returns `409` until the live connector
-readiness gate passes. This lets Google Drive Changes/watch, Blob Event Grid,
-and future tenant onboarding services feed Service Bus near real time without
-exposing connector secrets to browsers.
+readiness gate passes.
+
+Google Drive Changes/watch can call `/v1/webhooks/google-drive/changes`
+directly. The endpoint bypasses the unified search bearer token only for Google
+Drive notifications, verifies `X-Goog-Channel-Token` against
+`GDRIVE_WEBHOOK_TOKEN`, optionally checks `X-Goog-Channel-ID` against
+`GDRIVE_WEBHOOK_CHANNEL_IDS`, maps the notification to `GDRIVE_EVENT_TENANT_ID`
+/ `GDRIVE_EVENT_USER_ID`, and then uses the same readiness-gated event enqueue
+path internally. It still returns `409` until Google Drive OAuth or
+service-account credentials pass live readiness.
+
+Blob Event Grid and future tenant onboarding services should continue to call
+`/v1/events/:source` with the unified search API token unless they get their own
+provider-specific verified ingress.

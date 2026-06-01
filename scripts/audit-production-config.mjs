@@ -94,6 +94,9 @@ const report = {
             envGate(workerEnv, 'GOOGLE_SERVICE_ACCOUNT_JSON', 'secretRef', 'worker'),
           ]),
         ]),
+        envGate(apiEnv, 'GDRIVE_WEBHOOK_TOKEN', 'secretRef'),
+        envGate(apiEnv, 'GDRIVE_EVENT_TENANT_ID', 'value'),
+        envGate(apiEnv, 'GDRIVE_EVENT_USER_ID', 'value'),
       ]),
     ],
     futureConnectors: [

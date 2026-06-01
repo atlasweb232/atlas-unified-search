@@ -22,6 +22,7 @@ const secretInputs = [
   ['GOOGLE_CLIENT_SECRET', 'google-client-secret'],
   ['GOOGLE_REFRESH_TOKEN', 'google-refresh-token'],
   ['GOOGLE_SERVICE_ACCOUNT_JSON', 'google-service-account-json'],
+  ['GDRIVE_WEBHOOK_TOKEN', 'gdrive-webhook-token'],
   ['DATA_FABRIC_API_TOKEN', 'data-fabric-api-token'],
 ];
 
@@ -30,6 +31,9 @@ const valueInputs = [
   'SLACK_EVENT_TENANT_ID',
   'SLACK_EVENT_USER_ID',
   'GDRIVE_FOLDER_IDS',
+  'GDRIVE_WEBHOOK_CHANNEL_IDS',
+  'GDRIVE_EVENT_TENANT_ID',
+  'GDRIVE_EVENT_USER_ID',
   'DATA_FABRIC_BASE_URL',
   'DATA_FABRIC_READINESS_PATH',
   'DATA_FABRIC_RECORDS_PATH',

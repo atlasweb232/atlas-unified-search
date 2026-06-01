@@ -117,6 +117,43 @@ export async function createApp(config) {
     }
   });
 
+  app.post('/v1/webhooks/google-drive/changes', async (req, res) => {
+    const verification = verifyGoogleDriveWebhook(config, req);
+    if (!verification.ok) {
+      return res.status(verification.status).json({ success: false, error: verification.error });
+    }
+    const tenantId = config.gdrive?.eventTenantId || '';
+    const userId = config.gdrive?.eventUserId || '';
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'GDRIVE_EVENT_TENANT_ID and GDRIVE_EVENT_USER_ID are required for Google Drive changes' });
+    }
+    const event = {
+      type: 'google_drive.change',
+      event_id: req.headers['x-goog-message-number'] || '',
+      resourceId: req.headers['x-goog-resource-id'] || '',
+      resourceState: req.headers['x-goog-resource-state'] || '',
+      channelId: req.headers['x-goog-channel-id'] || '',
+      changed: req.headers['x-goog-changed'] || '',
+    };
+    try {
+      const result = await enqueueConnectorEvent({
+        config,
+        registry,
+        store,
+        jobs,
+        source: 'google_drive',
+        tenantId,
+        userId,
+        event,
+        options: {},
+        wait: false,
+      });
+      return res.status(202).json({ success: true, job: result.job, eventTrigger: result.eventTrigger });
+    } catch (error) {
+      return res.status(error.statusCode || 400).json({ success: false, error: error.message, details: error.details || undefined });
+    }
+  });
+
   app.get('/v1/production-readiness', async (req, res) => {
     try {
       await refreshStore(store);
@@ -429,6 +466,8 @@ function connectorEventOptions(source, event = {}, options = {}) {
       ...base,
       ...(event.folderIds?.length ? { folderIds: event.folderIds } : {}),
       ...(event.modifiedTime ? { modifiedAfter: event.modifiedTime } : {}),
+      ...(event.resourceId ? { resourceId: event.resourceId } : {}),
+      ...(event.channelId ? { channelId: event.channelId } : {}),
       limit: options.limit || 50,
     };
   }
@@ -462,6 +501,22 @@ function verifySlackSignature(config, req) {
   return { ok: true };
 }
 
+function verifyGoogleDriveWebhook(config, req) {
+  const expectedToken = config.gdrive?.webhookToken || '';
+  if (!expectedToken) return { ok: false, status: 503, error: 'GDRIVE_WEBHOOK_TOKEN is not configured' };
+  const token = String(req.headers['x-goog-channel-token'] || '');
+  if (!constantTimeEquals(token, expectedToken)) return { ok: false, status: 401, error: 'Invalid Google Drive channel token' };
+  const channelId = String(req.headers['x-goog-channel-id'] || '');
+  if (!channelId) return { ok: false, status: 400, error: 'Missing Google Drive channel id' };
+  const allowedChannelIds = config.gdrive?.webhookChannelIds || [];
+  if (allowedChannelIds.length && !allowedChannelIds.includes(channelId)) {
+    return { ok: false, status: 401, error: 'Unexpected Google Drive channel id' };
+  }
+  const resourceId = String(req.headers['x-goog-resource-id'] || '');
+  if (!resourceId) return { ok: false, status: 400, error: 'Missing Google Drive resource id' };
+  return { ok: true };
+}
+
 function constantTimeEquals(left, right) {
   const leftBuffer = Buffer.from(String(left || ''));
   const rightBuffer = Buffer.from(String(right || ''));
@@ -478,6 +533,8 @@ function eventTriggerSummary(source, event = {}) {
     channelId: event.channel || '',
     fileId: event.fileId || event.file_id || '',
     resourceId: event.resourceId || event.resource_id || '',
+    resourceState: event.resourceState || event.resource_state || '',
+    driveChannelId: event.channelId || event.channel_id || '',
     dataset: event.dataset || '',
     prefix: event.prefix || event.blobPrefix || '',
   };
