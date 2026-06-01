@@ -136,6 +136,14 @@ export class JsonSearchStore {
     this.state.audit = this.state.audit.slice(0, 1000);
   }
 
+  listAudit({ tenantId, userId, eventType = '', limit = 100 }) {
+    return this.state.audit
+      .filter((event) => (!tenantId || event.tenantId === tenantId))
+      .filter((event) => (!userId || event.userId === userId))
+      .filter((event) => (!eventType || event.eventType === eventType))
+      .slice(0, Math.min(Math.max(Number(limit) || 100, 1), 500));
+  }
+
   createSearchRun({ tenantId, userId, query, selectedSources, filters }) {
     const id = `run_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const run = {

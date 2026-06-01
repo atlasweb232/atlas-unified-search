@@ -117,6 +117,12 @@ assert(action.ok && action.data.actionJob?.status === 'completed', `assistant ac
 assert(action.data.actionJob.artifactIds?.length, 'assistant action did not create an artifact');
 console.log('assistant artifact from fixture pipeline ok', { actionId: action.data.actionJob.id, artifactIds: action.data.actionJob.artifactIds });
 
+const audit = await request(`/v1/audit?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(userId)}&limit=20`);
+assert(audit.ok, `audit endpoint failed: ${JSON.stringify(audit.data)}`);
+assert(audit.data.events?.some((event) => event.eventType === 'search_run_complete'), `audit did not include search_run_complete: ${JSON.stringify(audit.data)}`);
+assert(audit.data.events.every((event) => event.tenantId === tenantId && event.userId === userId), `audit returned out-of-scope events: ${JSON.stringify(audit.data.events)}`);
+console.log('scoped audit endpoint ok', { count: audit.data.events.length });
+
 if (readinessBySource.slack?.ready) {
   await liveConnectorSmoke({
     source: 'slack',

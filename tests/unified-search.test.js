@@ -247,6 +247,16 @@ test('unified search indexes fixture documents across all connector types', asyn
     const deletedSearch = await post(base, '/v1/search', { tenantId, userId, query: 'Redis deployment lease', sources: ['slack'] });
     assert.equal(deletedSearch.results.length, 0);
 
+    await post(base, '/v1/search', { tenantId, userId: 'other', query: 'Redis deployment lease', sources: ['slack'] });
+    const audit = await request(base, `/v1/audit?tenantId=${tenantId}&userId=${userId}&eventType=search&limit=10`);
+    assert.equal(audit.success, true);
+    assert.ok(audit.events.length >= 1);
+    assert.ok(audit.events.every((event) => event.tenantId === tenantId && event.userId === userId && event.eventType === 'search'));
+    assert.ok(audit.events.every((event) => event.userId !== 'other'));
+
+    const auditMissingScope = await fetch(`${base}/v1/audit?tenantId=${tenantId}`);
+    assert.equal(auditMissingScope.status, 400);
+
     const reindex = await post(base, '/v1/reindex/slack', {
       tenantId,
       userId,

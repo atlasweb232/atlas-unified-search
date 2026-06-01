@@ -224,6 +224,16 @@ export async function createApp(config) {
     res.json({ success: true, jobs: jobs.listJobs() });
   });
 
+  app.get('/v1/audit', async (req, res) => {
+    const { tenantId, userId, eventType = '', limit = '100' } = req.query || {};
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    }
+    await refreshStore(store);
+    const events = store.listAudit({ tenantId, userId, eventType, limit });
+    return res.json({ success: true, events });
+  });
+
   app.post('/v1/assistant/actions', async (req, res) => {
     const { tenantId, userId, searchRunId, actionType, selectedResultIds, prompt, provider } = req.body || {};
     if (!tenantId || !userId || !searchRunId || !actionType || !selectedResultIds?.length) {

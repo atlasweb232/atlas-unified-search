@@ -107,6 +107,34 @@ paths:
       responses:
         "200":
           description: Document detail
+  /v1/audit:
+    get:
+      summary: List redacted audit events scoped to tenant and user
+      parameters:
+        - name: tenantId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: eventType
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+      responses:
+        "200":
+          description: Tenant/user-scoped redacted audit event list
   /v1/assistant/actions:
     post:
       summary: Run an assistant action over retrieved search results
