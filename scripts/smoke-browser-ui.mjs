@@ -5,6 +5,21 @@ const token = requireEnv('UNIFIED_SEARCH_AUTH_TOKEN');
 const executablePath = process.env.CHROME_PATH || '/usr/bin/google-chrome';
 const tenantId = process.env.UNIFIED_SEARCH_SMOKE_TENANT_ID || 'atlasweb';
 const userId = process.env.UNIFIED_SEARCH_SMOKE_USER_ID || await resolveSmokeUserId();
+const dataFabricReady = await connectorReady('data_fabric');
+if (dataFabricReady) {
+  await apiJson('/v1/reindex/data_fabric', {
+    method: 'POST',
+    body: {
+      tenantId,
+      userId,
+      wait: true,
+      options: {
+        dataset: process.env.UNIFIED_SEARCH_SMOKE_DATA_FABRIC_DATASET || 'operational_summary',
+        limit: 10,
+      },
+    },
+  });
+}
 
 const browser = await chromium.launch({
   executablePath,
@@ -57,6 +72,23 @@ try {
   await page.getByTestId('assistant-summarize').click();
   await expectText(page, '.assistant-jobs', 'completed', 30000);
 
+  let dataFabricResultCount = 0;
+  if (dataFabricReady) {
+    for (const source of ['email', 'conference_bridge', 'knowledge_base']) {
+      const toggle = page.getByTestId(`source-toggle-${source}`);
+      if (!(await toggle.isDisabled()) && await toggle.isChecked()) await toggle.click();
+    }
+    const dataFabricToggle = page.getByTestId('source-toggle-data_fabric');
+    assert(!(await dataFabricToggle.isDisabled()), 'Data Fabric source must be selectable when readiness is true');
+    if (!(await dataFabricToggle.isChecked())) await dataFabricToggle.click();
+    await page.getByTestId('search-input').fill(process.env.UNIFIED_SEARCH_SMOKE_DATA_FABRIC_QUERY || 'unified search index status');
+    await page.getByTestId('search-submit').click();
+    await page.waitForSelector('[data-testid="result-row"]', { timeout: 30000 });
+    dataFabricResultCount = await page.locator('[data-testid="result-row"]').count();
+    assert(dataFabricResultCount > 0, 'expected at least one Data Fabric result in UI');
+    await expectText(page, '[data-testid="result-row"]', 'Data Fabric', 15000);
+  }
+
   console.log(JSON.stringify({
     frontend,
     browser: executablePath,
@@ -68,10 +100,23 @@ try {
       'email-only UI search returned results',
       'result expansion clicked',
       'assistant summarize action completed',
+      ...(dataFabricReady ? ['data-fabric-only UI search returned results'] : ['data-fabric UI search skipped because connector is not ready']),
     ],
     resultCount,
+    dataFabricResultCount,
   }, null, 2));
 } finally {
+  if (dataFabricReady) {
+    await apiJson('/v1/documents', {
+      method: 'DELETE',
+      body: {
+        tenantId,
+        userId,
+        source: 'data_fabric',
+        resetCheckpoints: true,
+      },
+    }).catch(() => {});
+  }
   await browser.close();
 }
 
@@ -90,6 +135,27 @@ async function resolveSmokeUserId() {
   const body = await response.json().catch(() => ({}));
   const email = body.checks?.find((check) => check.source === 'email');
   return email?.details?.readinessUserEmail || 'user-required';
+}
+
+async function connectorReady(source) {
+  const body = await apiJson(`/v1/connectors/readiness?source=${encodeURIComponent(source)}`);
+  return Boolean(body.checks?.[0]?.ready);
+}
+
+async function apiJson(path, { method = 'GET', body } = {}) {
+  const response = await fetch(`${frontend}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.success === false) {
+    throw new Error(`${method} ${path} failed: ${response.status} ${data.error || JSON.stringify(data)}`);
+  }
+  return data;
 }
 
 function withRuntimeScope(baseUrl, scope) {
