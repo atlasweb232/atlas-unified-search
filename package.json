@@ -23,6 +23,7 @@
     "slack:list-channels": "node scripts/list-slack-channels.mjs",
     "gdrive:create-refresh-token": "node scripts/create-google-refresh-token.mjs",
     "gdrive:create-watch": "node scripts/create-google-drive-watch.mjs",
+    "gdrive:renew-watch": "node scripts/renew-google-drive-watch.mjs",
     "wire:production-connectors": "node scripts/wire-production-connectors.mjs",
     "unwire:production-connectors": "node scripts/unwire-production-connectors.mjs",
     "smoke:production": "node scripts/smoke-production.mjs",
