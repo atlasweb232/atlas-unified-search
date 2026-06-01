@@ -186,10 +186,10 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
     if (!window.confirm(`Delete indexed ${sourceMeta[source]?.label || source} documents for this user?`)) return;
     setMaintenance({ source, busy: true, message: '' });
     try {
-      const data = await apiRequest(apiBaseUrl, '/v1/documents', {
+      const data = await apiRequest(apiBaseUrl, `/v1/sources/${source}/documents`, {
         method: 'DELETE',
         authToken,
-        body: JSON.stringify({ tenantId, userId, source, resetCheckpoints: true }),
+        body: JSON.stringify({ tenantId, userId, resetCheckpoints: true }),
       });
       setMaintenance({ source, busy: false, message: `Deleted ${data.deleted || 0} document(s).` });
       const removedResultIds = new Set(results.filter((result) => result.source === source).map((result) => result.id));

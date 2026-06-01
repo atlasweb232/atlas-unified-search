@@ -106,12 +106,11 @@ try {
   }, null, 2));
 } finally {
   if (dataFabricReady) {
-    await apiJson('/v1/documents', {
+    await apiJson('/v1/sources/data_fabric/documents', {
       method: 'DELETE',
       body: {
         tenantId,
         userId,
-        source: 'data_fabric',
         resetCheckpoints: true,
       },
     }).catch(() => {});

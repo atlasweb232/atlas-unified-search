@@ -29,6 +29,7 @@ The unified search service is production-testable when these gates are true:
 - Tenant/user IDs are supplied on every sync, search, search-run, document, and assistant action request.
 - Cross-tenant reads are rejected by API tests and manual smoke tests.
 - Scoped deletion and `/v1/reindex/{source}` are available for tenant/user/source resets without deleting other users' data.
+- `DELETE /v1/sources/{source}/documents` is available for explicit connector-scoped cleanup and optional checkpoint reset; the generic `DELETE /v1/documents` remains for document-ID and compatibility workflows.
 - `/v1/sync/{source}` and `/v1/reindex/{source}` reject live connector jobs with `409` unless readiness passes; `/v1/reindex/{source}` must not delete existing indexed data when Slack/Drive auth is missing or invalid.
 - `/v1/events/{source}` accepts authenticated provider events, strips fixture bypasses, audits a redacted event summary, and queues only readiness-gated tenant/user-scoped sync jobs.
 - `/v1/webhooks/slack/events` accepts Slack Events API payloads only with a valid `X-Slack-Signature`, fresh `X-Slack-Request-Timestamp`, and configured `SLACK_SIGNING_SECRET`, `SLACK_EVENT_TENANT_ID`, and `SLACK_EVENT_USER_ID`; signed events still return `409` until Slack live readiness passes.
@@ -65,5 +66,4 @@ Current test boundary:
 
 Known non-blocking follow-up after the first production test:
 
-- Add connector-specific deletion/reindex endpoints.
 - Add Azure OpenAI provider alias if OpenAI-compatible embedding/chat endpoints are not sufficient.

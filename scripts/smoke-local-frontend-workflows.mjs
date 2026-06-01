@@ -145,9 +145,9 @@ async function checkIndexedSource({ source, tenantId: sourceTenantId, userId, qu
     body: { tenantId: sourceTenantId, userId, query, sources: [source], limit: liveLimit },
   });
   assert(search.results?.length >= 1, `${source} search returned no results`);
-  const deleted = await apiRequest('/v1/documents', {
+  const deleted = await apiRequest(`/v1/sources/${source}/documents`, {
     method: 'DELETE',
-    body: { tenantId: sourceTenantId, userId, source, resetCheckpoints: true },
+    body: { tenantId: sourceTenantId, userId, resetCheckpoints: true },
   });
   report.checks.push({
     name: `${source}_index_search_cleanup`,
@@ -200,9 +200,9 @@ async function checkFixturePipelineAndAssistant() {
   });
   assert(action.actionJob?.status === 'completed', `assistant action did not complete: ${JSON.stringify(action.actionJob)}`);
   assert(action.actionJob?.artifactIds?.length, 'assistant action did not create an artifact');
-  const deleted = await apiRequest('/v1/documents', {
+  const deleted = await apiRequest('/v1/sources/slack/documents', {
     method: 'DELETE',
-    body: { tenantId: sourceTenantId, userId: sourceUserId, source: 'slack', resetCheckpoints: true },
+    body: { tenantId: sourceTenantId, userId: sourceUserId, resetCheckpoints: true },
   });
   report.checks.push({
     name: 'fixture_ingestion_search_assistant_artifact_cleanup',

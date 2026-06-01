@@ -465,13 +465,17 @@ test('unified search indexes fixture documents across all connector types', asyn
     assert.equal(ppt.actionJob.status, 'completed');
     assert.equal(ppt.actionJob.artifactIds.length, 1);
 
-    const deleted = await request(base, '/v1/documents', {
+    const deleted = await request(base, '/v1/sources/slack/documents', {
       method: 'DELETE',
-      body: { tenantId, userId, source: 'slack', resetCheckpoints: true },
+      body: { tenantId, userId, resetCheckpoints: true },
     });
+    assert.equal(deleted.source, 'slack');
     assert.equal(deleted.deleted, 1);
     const deletedSearch = await post(base, '/v1/search', { tenantId, userId, query: 'Redis deployment lease', sources: ['slack'] });
     assert.equal(deletedSearch.results.length, 0);
+
+    const missingDeleteScope = await fetch(`${base}/v1/sources/slack/documents`, { method: 'DELETE' });
+    assert.equal(missingDeleteScope.status, 400);
 
     await post(base, '/v1/search', { tenantId, userId: 'other', query: 'Redis deployment lease', sources: ['slack'] });
     const audit = await request(base, `/v1/audit?tenantId=${tenantId}&userId=${userId}&eventType=search&limit=10`);

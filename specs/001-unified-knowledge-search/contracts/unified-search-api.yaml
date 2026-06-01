@@ -228,6 +228,21 @@ paths:
       responses:
         "200":
           description: Scoped deletion result
+  /v1/sources/{source}/documents:
+    delete:
+      summary: Delete documents and optionally checkpoints for one source in a tenant/user scope
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [slack, google_drive, conference_bridge, email, knowledge_base, data_fabric]
+      responses:
+        "200":
+          description: Source-scoped deletion result
+        "403":
+          description: Source is not enabled for this tenant/user
   /v1/documents/{documentId}:
     get:
       summary: Get expandable document details

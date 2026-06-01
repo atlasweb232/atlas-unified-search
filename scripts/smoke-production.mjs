@@ -231,12 +231,11 @@ if (readinessBySource.conference_bridge?.ready) {
     }),
   });
   assert(conferenceSearch.ok && conferenceSearch.data.results?.length, `conference search failed: ${JSON.stringify(conferenceSearch.data)}`);
-  await request('/v1/documents', {
+  await request('/v1/sources/conference_bridge/documents', {
     method: 'DELETE',
     body: JSON.stringify({
       tenantId: conferenceTenantId,
       userId: conferenceUserId,
-      source: 'conference_bridge',
       resetCheckpoints: true,
     }),
   });
@@ -268,12 +267,11 @@ if (readinessBySource.knowledge_base?.ready) {
     }),
   });
   assert(kbSearch.ok && kbSearch.data.results?.length, `knowledge base search failed: ${JSON.stringify(kbSearch.data)}`);
-  await request('/v1/documents', {
+  await request('/v1/sources/knowledge_base/documents', {
     method: 'DELETE',
     body: JSON.stringify({
       tenantId: kbTenantId,
       userId: kbUserId,
-      source: 'knowledge_base',
       resetCheckpoints: true,
     }),
   });
@@ -282,12 +280,11 @@ if (readinessBySource.knowledge_base?.ready) {
   console.log('knowledge base live source skipped', { status: readinessBySource.knowledge_base?.status || 'not_reported' });
 }
 
-const fixtureCleanup = await request('/v1/documents', {
+const fixtureCleanup = await request('/v1/sources/slack/documents', {
   method: 'DELETE',
   body: JSON.stringify({
     tenantId,
     userId,
-    source: 'slack',
     resetCheckpoints: true,
   }),
 });
@@ -348,12 +345,11 @@ async function liveConnectorSmoke({ source, query, options = {} }) {
       searchMode: status.searchMode,
     });
   } finally {
-    const cleanup = await request('/v1/documents', {
+    const cleanup = await request(`/v1/sources/${source}/documents`, {
       method: 'DELETE',
       body: JSON.stringify({
         tenantId: liveTenantId,
         userId: liveUserId,
-        source,
         resetCheckpoints: true,
       }),
     });

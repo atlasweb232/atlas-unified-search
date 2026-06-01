@@ -439,18 +439,15 @@ export async function createApp(config) {
     const source = req.body?.source || req.query.source || '';
     const documentIds = req.body?.documentIds || [];
     const resetCheckpoints = Boolean(req.body?.resetCheckpoints || req.query.resetCheckpoints === 'true');
-    if (!tenantId || !userId) {
-      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
-    }
-    if (source && !sourceAllowed(config, tenantId, userId, source)) {
-      return res.status(403).json({ success: false, error: `Source is not enabled for this user: ${source}` });
-    }
-    await refreshStore(store);
-    const deleted = store.deleteDocuments({ tenantId, userId, source, documentIds });
-    const checkpoints = resetCheckpoints ? store.deleteCheckpoints({ tenantId, userId, source }) : { deleted: 0 };
-    store.audit({ eventType: 'documents_delete', tenantId, userId, source, metadata: { deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted } });
-    await store.save();
-    return res.json({ success: true, deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted, documentIds: deleted.documentIds });
+    return deleteScopedDocuments({ req, res, config, store, tenantId, userId, source, documentIds, resetCheckpoints });
+  });
+
+  app.delete('/v1/sources/:source/documents', async (req, res) => {
+    const tenantId = req.body?.tenantId || req.query.tenantId;
+    const userId = req.body?.userId || req.query.userId;
+    const documentIds = req.body?.documentIds || [];
+    const resetCheckpoints = Boolean(req.body?.resetCheckpoints || req.query.resetCheckpoints === 'true');
+    return deleteScopedDocuments({ req, res, config, store, tenantId, userId, source: req.params.source, documentIds, resetCheckpoints });
   });
 
   app.post('/v1/retention/cleanup', async (req, res) => {
@@ -573,6 +570,21 @@ async function refreshStore(store) {
     return;
   }
   await store.refresh();
+}
+
+async function deleteScopedDocuments({ res, config, store, tenantId, userId, source = '', documentIds = [], resetCheckpoints = false }) {
+  if (!tenantId || !userId) {
+    return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+  }
+  if (source && !sourceAllowed(config, tenantId, userId, source)) {
+    return res.status(403).json({ success: false, error: `Source is not enabled for this user: ${source}` });
+  }
+  await refreshStore(store);
+  const deleted = store.deleteDocuments({ tenantId, userId, source, documentIds });
+  const checkpoints = resetCheckpoints ? store.deleteCheckpoints({ tenantId, userId, source }) : { deleted: 0 };
+  store.audit({ eventType: 'documents_delete', tenantId, userId, source, metadata: { deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted } });
+  await store.save();
+  return res.json({ success: true, source, deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted, documentIds: deleted.documentIds });
 }
 
 async function enqueueConnectorEvent({ config, registry, store, jobs, source, tenantId, userId, event = {}, options = {}, wait = false }) {
