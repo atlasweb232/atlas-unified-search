@@ -66,9 +66,10 @@ VectorSpaceRegistry {
 ```text
 config.vectorSpaces = {
   text: {
-    dim:      TEXT_EMBEDDING_DIM  (env, default 1536)
-    provider: 'hash' | 'openai'   (EMBEDDING_PROVIDER, existing)
-    model:    EMBEDDING_MODEL
+    dim:      TEXT_EMBEDDING_DIM  (env, default 768 — BGE-base-en-v1.5)
+    provider: 'bge_gpu' | 'hash'  (EMBEDDING_PROVIDER; bge_gpu = shared service, primary)
+    model:    EMBEDDING_MODEL      (default BAAI/bge-base-en-v1.5)
+    serviceUrl: GPU_EMBEDDING_SERVICE_URL   (shared Cloud Run service, reused)
   },
   vision: {
     dim:      VISION_EMBEDDING_DIM (env, default 512)

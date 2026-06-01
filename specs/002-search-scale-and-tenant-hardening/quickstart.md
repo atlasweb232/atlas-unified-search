@@ -20,7 +20,7 @@ npm run db:migrate          # applies migrations/001 + 002
 ```bash
 # Deterministic local embedder at the configured dimension (no embedding API).
 export EMBEDDING_PROVIDER=hash
-export EMBEDDING_DIM=1536            # must equal the vector column; startup asserts this
+export EMBEDDING_DIM=768             # canonical = BGE-base-en-v1.5 (768); must equal the vector column; startup asserts this
 
 # Mock assistant; no LLM key.
 export CHAT_PROVIDER=mock

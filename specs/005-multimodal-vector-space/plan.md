@@ -19,8 +19,8 @@ Target:
 
 ## 1. Dimension fix (extends 002 M2)
 
-- Single `TEXT_EMBEDDING_DIM` env var (default 1536); single
-  `VISION_EMBEDDING_DIM` (default 512).
+- Single `TEXT_EMBEDDING_DIM` env var (default **768**, BGE-base-en-v1.5 via the
+  shared GPU service); single `VISION_EMBEDDING_DIM` (default 512, CLIP).
 - `createEmbedder` and `createVisionEmbedder` assert their output matches the
   configured dim; startup throws if not.
 - The existing `embedding` column is renamed/migrated to `embedding_text` in

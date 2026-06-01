@@ -131,8 +131,11 @@ with the relevant factory. Nothing outside the package knows which concrete
 class is in use. Config selects the adapter; dependency injection wires it.
 
 ```
-EMBEDDING_PROVIDER=hash    → HashTextEmbedder
-EMBEDDING_PROVIDER=openai  → OpenAITextEmbedder
+EMBEDDING_PROVIDER=bge_gpu → BgeGpuServiceEmbedder (PRIMARY; BGE-base-en-v1.5 768,
+                             thin client of the shared Cloud Run GPU embedding
+                             service reused from the Atlas email system; batch 32-64)
+EMBEDDING_PROVIDER=hash    → HashTextEmbedder (dev/offline; MUST emit 768 to match)
+EMBEDDING_PROVIDER=openai  → OpenAITextEmbedder (legacy/alt; 1536 — NOT the common scheme)
 VISION_EMBEDDING_PROVIDER=local → LocalClipProvider
 VISION_EMBEDDING_PROVIDER=api   → ApiVisionEmbedder
 

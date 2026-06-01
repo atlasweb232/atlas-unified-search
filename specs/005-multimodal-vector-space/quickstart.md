@@ -5,9 +5,11 @@ Prereqs: `002` foundation (pgvector + identity) from its quickstart.
 ## 1. Configure both spaces (no accounts needed)
 
 ```bash
-# Text space — local hash at correct dimension
+# Text space — common scheme: BGE-768 via the shared GPU embedding service.
+# Production: EMBEDDING_PROVIDER=bge_gpu + GPU_EMBEDDING_SERVICE_URL=<shared service>
+# Local/CI (no service): hash fallback, but still 768 to keep the schema stable.
 export EMBEDDING_PROVIDER=hash
-export TEXT_EMBEDDING_DIM=1536         # must match embedding_text column
+export TEXT_EMBEDDING_DIM=768          # BGE-base-en-v1.5; must match embedding_text column
 
 # Vision space — local CLIP, no account
 export VISION_EMBEDDING_PROVIDER=local

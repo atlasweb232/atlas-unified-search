@@ -42,8 +42,16 @@ and the visual layer of conference video search.
 
 ## Dependencies
 
+- **Common embedding scheme (decision):** the `text` space MUST use
+  `BAAI/bge-base-en-v1.5` (768-dim) via the **existing shared GPU embedding
+  service** (reused, not re-deployed). Email stays **federated** (queried via
+  its own service/Elasticsearch) — convergence is embedding-only, so email
+  vectors and unified-search vectors share the same model and are comparable.
+  Federated email scores still require normalization at merge (`008` fusion),
+  since Elasticsearch scoring and Qdrant cosine differ in scale even at the
+  same model.
 - `002 M2` dimension fix is a hard prerequisite (the dimension must be a single
-  configured truth before this spec adds a second space).
+  configured truth — now **768** — before this spec adds a second space).
 - `003 M2` attachment reconstruction and `004 M4` clip endpoint are the
   reconstitution implementations this spec's model describes.
 
@@ -75,7 +83,12 @@ and the visual layer of conference video search.
 - Define a `VectorSpace` registry with at least two named spaces:
   - `text` — for all text-derived embeddings (document body, transcript
     segments, extracted attachment text). Dimension = `TEXT_EMBEDDING_DIM`
-    (default 1536 to match `text-embedding-3-small`; must satisfy `002 M2`).
+    = **768**, the ecosystem-common scheme: `BAAI/bge-base-en-v1.5` served by
+    the **shared Cloud Run GPU embedding service** the Atlas email system
+    already uses (`atlasweb-mini/.../emailVectorizationService`). This makes
+    unified-search text vectors **comparable to federated email results**
+    (which use the same model). Must satisfy `002 M2`. BGE query/passage
+    instruction prefixes + L2 normalization MUST match the email service.
   - `vision` — for image-derived embeddings (document page thumbnails, video
     keyframes, slide captures). Dimension = `VISION_EMBEDDING_DIM`
     (default 512 for CLIP ViT-B/32).

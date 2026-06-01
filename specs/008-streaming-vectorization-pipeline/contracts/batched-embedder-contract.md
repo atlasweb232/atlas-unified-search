@@ -24,6 +24,18 @@ VisionEmbedder {
 - Hash provider implements `embedBatch` by mapping (proves batch path offline).
 - OpenAI provider uses array `input` in one request per provider-batch.
 
+## Common scheme: shared GPU embedding service
+
+- The **primary** `TextEmbedder` is `BgeGpuServiceEmbedder` — a thin client of the
+  **shared Cloud Run GPU embedding service** reused from the Atlas email system
+  (`BAAI/bge-base-en-v1.5`, **768-dim**). `embedBatch` maps directly to that
+  service's batch endpoint (its native batch is **32–64** texts/call).
+- This guarantees unified-search vectors are identical-model to federated email
+  vectors (the common scheme). BGE query/passage prefixes + L2 norm MUST match
+  the email service.
+- The hash dev embedder MUST emit 768 so the pipeline/schema is dimension-stable
+  offline; OpenAI-1536 is NOT used for the common-scheme path.
+
 ## Rate limiting
 
 - The embed worker (not the embedder) owns a token bucket keyed to provider
