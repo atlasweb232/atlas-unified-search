@@ -101,7 +101,13 @@ if [[ "$PROMOTE_SCHEDULER" == "true" ]]; then
 fi
 
 if [[ "$DRY_RUN" != "true" ]]; then
-  [[ "$PROMOTE_API" == "true" ]] && show_summary "$API_APP_NAME"
-  [[ "$PROMOTE_WORKER" == "true" ]] && show_summary "$WORKER_APP_NAME"
-  [[ "$PROMOTE_SCHEDULER" == "true" ]] && show_summary "$SCHEDULER_APP_NAME"
+  if [[ "$PROMOTE_API" == "true" ]]; then
+    show_summary "$API_APP_NAME"
+  fi
+  if [[ "$PROMOTE_WORKER" == "true" ]]; then
+    show_summary "$WORKER_APP_NAME"
+  fi
+  if [[ "$PROMOTE_SCHEDULER" == "true" ]]; then
+    show_summary "$SCHEDULER_APP_NAME"
+  fi
 fi
