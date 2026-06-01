@@ -25,6 +25,7 @@ The unified search service is production-testable when these gates are true:
 - `/v1/sync/{source}` and `/v1/reindex/{source}` reject live connector jobs with `409` unless readiness passes; `/v1/reindex/{source}` must not delete existing indexed data when Slack/Drive auth is missing or invalid.
 - `/v1/events/{source}` accepts authenticated provider events, strips fixture bypasses, audits a redacted event summary, and queues only readiness-gated tenant/user-scoped sync jobs.
 - `UNIFIED_SEARCH_SOURCE_TIMEOUT_MS` is configured or defaults to 30000ms so a hung federated source-agent produces a partial search run instead of blocking the whole query.
+- `UNIFIED_SEARCH_SYNC_RETRY_ATTEMPTS` and `UNIFIED_SEARCH_SYNC_RETRY_BASE_DELAY_MS` provide bounded retries for transient source sync failures while configuration/auth failures fail fast.
 - Slack and Google Drive syncs persist tenant/user-scoped checkpoints; use `forceFullSync` or `/v1/reindex/{source}` to intentionally rescan.
 - Optional `UNIFIED_SEARCH_SOURCE_PERMISSIONS` can restrict usable sources per `tenantId:userId`.
 - `npm run smoke:production` passes with `UNIFIED_SEARCH_SMOKE_MODE=inline`.

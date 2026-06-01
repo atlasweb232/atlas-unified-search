@@ -13,7 +13,7 @@ const embedder = await createEmbedder(config);
 const searchEngine = new SearchEngine({ store, embedder });
 const registry = createConnectorRegistry(config);
 const queue = createJobQueue(config);
-const jobs = new JobRunner({ registry, store, searchEngine, queue: { name: 'inline' } });
+const jobs = new JobRunner({ registry, store, searchEngine, queue: { name: 'inline' }, retry: config.syncRetry });
 
 if (queue.name !== 'azure-service-bus') {
   console.error('SERVICE_BUS_CONNECTION_STRING is required for the worker');

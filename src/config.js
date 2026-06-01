@@ -55,6 +55,10 @@ export function loadConfig() {
     searchRun: {
       sourceTimeoutMs: number('UNIFIED_SEARCH_SOURCE_TIMEOUT_MS', 30000),
     },
+    syncRetry: {
+      maxAttempts: number('UNIFIED_SEARCH_SYNC_RETRY_ATTEMPTS', 3),
+      baseDelayMs: number('UNIFIED_SEARCH_SYNC_RETRY_BASE_DELAY_MS', 250),
+    },
     syncSchedulesRaw: process.env.UNIFIED_SEARCH_SYNC_SCHEDULES || '',
     schedulerRequired: ['1', 'true', 'yes'].includes(String(process.env.UNIFIED_SEARCH_SCHEDULER_REQUIRED || '').toLowerCase()),
     postgres: {

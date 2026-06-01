@@ -30,6 +30,8 @@ only wires secret references into the app:
 ```bash
 export UNIFIED_SEARCH_AUTH_TOKEN='<random-shared-api-token>'
 export UNIFIED_SEARCH_REQUIRE_AUTH=true
+export UNIFIED_SEARCH_SYNC_RETRY_ATTEMPTS=3
+export UNIFIED_SEARCH_SYNC_RETRY_BASE_DELAY_MS=250
 export POSTGRES_CONNECTION_STRING='<postgres-ssl-connection-string>'
 export SERVICE_BUS_CONNECTION_STRING='<service-bus-connection-string>'
 export SERVICE_BUS_SYNC_QUEUE_NAME='unified-search-sync'
@@ -281,3 +283,12 @@ Expected production health:
 - `queue.backend` is `azure-service-bus`
 - `artifacts.backend` is `azure-blob-artifact`
 - `auth.required` is `true`
+
+Sync retry behavior:
+
+- `UNIFIED_SEARCH_SYNC_RETRY_ATTEMPTS` defaults to `3`.
+- `UNIFIED_SEARCH_SYNC_RETRY_BASE_DELAY_MS` defaults to `250`.
+- Transient provider errors such as timeouts, 429, 502, 503, and 504 are retried
+  with exponential backoff and `sync_retry` audit events.
+- Missing connector configuration, invalid auth, forbidden, and permission
+  failures fail fast so bad credentials do not churn the queue.

@@ -27,7 +27,7 @@ export async function createApp(config) {
   const searchEngine = new SearchEngine({ store, embedder });
   const registry = createConnectorRegistry(config);
   const queue = createJobQueue(config);
-  const jobs = new JobRunner({ registry, store, searchEngine, queue });
+  const jobs = new JobRunner({ registry, store, searchEngine, queue, retry: config.syncRetry });
   const searchRuns = new SearchRunCoordinator({ store, searchEngine, registry, sourceTimeoutMs: config.searchRun?.sourceTimeoutMs });
   const assistant = new AssistantActionService({
     store,

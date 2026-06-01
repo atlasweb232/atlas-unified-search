@@ -21,7 +21,7 @@ const embedder = await createEmbedder(config);
 const searchEngine = new SearchEngine({ store, embedder });
 const registry = createConnectorRegistry(config);
 const queue = createJobQueue(config);
-const jobs = new JobRunner({ registry, store, searchEngine, queue });
+const jobs = new JobRunner({ registry, store, searchEngine, queue, retry: config.syncRetry });
 const timers = [];
 let shuttingDown = false;
 

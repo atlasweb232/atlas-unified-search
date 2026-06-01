@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../src/app.js';
+import { isRetryableSyncError, JobRunner } from '../src/jobRunner.js';
 import { SearchRunCoordinator } from '../src/searchRun.js';
 import { JsonSearchStore } from '../src/store.js';
 
@@ -16,6 +17,7 @@ function config(dataDir) {
     embeddingModel: 'test',
     auth: { required: false, token: '' },
     sourcePermissions: {},
+    syncRetry: { maxAttempts: 3, baseDelayMs: 1 },
     postgres: { connectionString: '', ssl: false },
     serviceBus: { connectionString: '', syncQueueName: 'unified-search-sync' },
     artifacts: { azureStorageConnectionString: '', container: 'unified-search-artifacts', publicBaseUrl: '' },
@@ -126,6 +128,77 @@ test('search run source-agent timeout returns partial results', async () => {
     assert.equal(slow.status, 'failed');
     assert.match(slow.error, /timed out/);
     assert.equal(fast.status, 'completed');
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
+test('job runner retries transient sync failures and does not retry configuration failures', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-retry-'));
+  try {
+    const store = new JsonSearchStore({ dataDir: dir });
+    await store.load();
+    let attempts = 0;
+    const registry = {
+      get() {
+        return {
+          async sync() {
+            attempts += 1;
+            if (attempts < 2) {
+              const error = new Error('temporary 503 from provider');
+              error.statusCode = 503;
+              throw error;
+            }
+            return [{
+              tenantId: 'atlasweb',
+              userId: 'rakib',
+              source: 'knowledge_base',
+              sourceId: 'retry-doc',
+              id: 'atlasweb:rakib:knowledge_base:retry-doc',
+              title: 'Retry document',
+              summary: 'Retry succeeded',
+              body: 'Retry succeeded after a transient provider failure.',
+              metadata: {},
+              children: [],
+            }];
+          },
+        };
+      },
+    };
+    const searchEngine = {
+      async indexDocuments(documents) {
+        return documents.length;
+      },
+    };
+    const runner = new JobRunner({ registry, store, searchEngine, queue: { name: 'inline' }, retry: { maxAttempts: 3, baseDelayMs: 1 } });
+    const job = await runner.enqueue({ source: 'knowledge_base', tenantId: 'atlasweb', userId: 'rakib', autoStart: false });
+    const result = await runner.run(job.id, { source: 'knowledge_base', tenantId: 'atlasweb', userId: 'rakib' });
+    assert.equal(result.indexed, 1);
+    assert.equal(attempts, 2);
+    assert.equal(result.job.status, 'completed');
+    assert.equal(result.job.attempts, 2);
+    assert.ok(store.listAudit({ tenantId: 'atlasweb', userId: 'rakib', eventType: 'sync_retry' }).length >= 1);
+
+    let configAttempts = 0;
+    const configRegistry = {
+      get() {
+        return {
+          async sync() {
+            configAttempts += 1;
+            throw new Error('Slack connector is not configured');
+          },
+        };
+      },
+    };
+    const failedRunner = new JobRunner({ registry: configRegistry, store, searchEngine, queue: { name: 'inline' }, retry: { maxAttempts: 3, baseDelayMs: 1 } });
+    const failedJob = await failedRunner.enqueue({ source: 'slack', tenantId: 'atlasweb', userId: 'rakib', autoStart: false });
+    await assert.rejects(
+      () => failedRunner.run(failedJob.id, { source: 'slack', tenantId: 'atlasweb', userId: 'rakib' }),
+      /not configured/,
+    );
+    assert.equal(configAttempts, 1);
+    assert.equal(store.listJobs({ tenantId: 'atlasweb', userId: 'rakib' }).find((item) => item.id === failedJob.id).status, 'failed');
+    assert.equal(isRetryableSyncError(new Error('Slack connector is not configured')), false);
   } finally {
     await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
