@@ -59,6 +59,11 @@ export function loadConfig() {
       maxAttempts: number('UNIFIED_SEARCH_SYNC_RETRY_ATTEMPTS', 3),
       baseDelayMs: number('UNIFIED_SEARCH_SYNC_RETRY_BASE_DELAY_MS', 250),
     },
+    retention: {
+      documentDays: number('UNIFIED_SEARCH_DOCUMENT_RETENTION_DAYS', 90),
+      operationalDays: number('UNIFIED_SEARCH_OPERATIONAL_RETENTION_DAYS', 30),
+      auditDays: number('UNIFIED_SEARCH_AUDIT_RETENTION_DAYS', 90),
+    },
     syncSchedulesRaw: process.env.UNIFIED_SEARCH_SYNC_SCHEDULES || '',
     schedulerRequired: ['1', 'true', 'yes'].includes(String(process.env.UNIFIED_SEARCH_SCHEDULER_REQUIRED || '').toLowerCase()),
     postgres: {

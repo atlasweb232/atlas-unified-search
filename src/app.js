@@ -54,6 +54,7 @@ export async function createApp(config) {
       queue: { backend: queue.name },
       schedules: scheduleStatus(config),
       artifacts: { backend: assistant.artifactProvider.name, configured: assistant.artifactProvider.configured() },
+      retention: retentionStatus(config),
     });
     }).catch((error) => res.status(503).json({ success: false, error: error.message }));
   });
@@ -352,6 +353,34 @@ export async function createApp(config) {
     store.audit({ eventType: 'documents_delete', tenantId, userId, source, metadata: { deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted } });
     await store.save();
     return res.json({ success: true, deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted, documentIds: deleted.documentIds });
+  });
+
+  app.post('/v1/retention/cleanup', async (req, res) => {
+    const { tenantId, userId, dryRun = true } = req.body || {};
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    }
+    try {
+      await refreshStore(store);
+      const report = await store.cleanupRetention({
+        tenantId,
+        userId,
+        documentRetentionDays: req.body?.documentRetentionDays || config.retention?.documentDays,
+        operationalRetentionDays: req.body?.operationalRetentionDays || config.retention?.operationalDays,
+        auditRetentionDays: req.body?.auditRetentionDays || config.retention?.auditDays,
+        dryRun,
+      });
+      store.audit({
+        eventType: dryRun ? 'retention_cleanup_dry_run' : 'retention_cleanup',
+        tenantId,
+        userId,
+        metadata: { deleted: report.deleted, cutoffs: report.cutoffs },
+      });
+      await store.save();
+      return res.json({ success: true, report });
+    } catch (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
   });
 
   app.post('/v1/reindex/:source', async (req, res) => {
@@ -668,6 +697,7 @@ function productionReadinessReport({ config, store, queue, assistant, connectorC
     queue: { ready: queue.name === 'azure-service-bus', detail: queue.name },
     artifacts: { ready: assistant.artifactProvider.name === 'azure-blob-artifact' && assistant.artifactProvider.configured(), detail: assistant.artifactProvider.name },
     scheduler: scheduleStatus(config),
+    retention: retentionStatus(config),
   };
   const liveSources = ['email', 'conference_bridge', 'knowledge_base']
     .map((source) => ({ source, ready: Boolean(checksBySource[source]?.ready), status: checksBySource[source]?.status || 'not_reported' }));
@@ -723,6 +753,21 @@ function productionReadinessReport({ config, store, queue, assistant, connectorC
       ...webhookIngress.filter((item) => !item.ready).map((item) => `Configure ${item.name} webhook ingress: missing ${item.missing.join(', ')}.`),
       ...(futureSources.some((item) => item.source === 'data_fabric' && !item.ready) ? ['Define and configure the Data Fabric API contract before claiming live Data Fabric readiness.'] : []),
     ],
+  };
+}
+
+function retentionStatus(config) {
+  const retention = config.retention || {};
+  const documentDays = retention.documentDays || 90;
+  const operationalDays = retention.operationalDays || 30;
+  const auditDays = retention.auditDays || 90;
+  return {
+    ready: [documentDays, operationalDays, auditDays].every((value) => Number(value) > 0),
+    detail: {
+      documentDays,
+      operationalDays,
+      auditDays,
+    },
   };
 }
 

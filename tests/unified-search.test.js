@@ -19,6 +19,7 @@ function config(dataDir) {
     auth: { required: false, token: '' },
     sourcePermissions: {},
     syncRetry: { maxAttempts: 3, baseDelayMs: 1 },
+    retention: { documentDays: 90, operationalDays: 30, auditDays: 90 },
     postgres: { connectionString: '', ssl: false },
     serviceBus: { connectionString: '', syncQueueName: 'unified-search-sync' },
     artifacts: { azureStorageConnectionString: '', container: 'unified-search-artifacts', publicBaseUrl: '' },
@@ -406,6 +407,84 @@ test('source permissions block disallowed sync and search sources', async () => 
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     await new Promise((resolve) => setTimeout(resolve, 25));
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
+test('retention cleanup is tenant-scoped and supports dry-run', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-retention-'));
+  let server;
+  try {
+    const app = await createApp(config(dir));
+    server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const oldDate = new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString();
+
+    await post(base, '/v1/sync/slack', {
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      wait: true,
+      options: { fixtures: [{ channelId: 'C1', timestamp: oldDate, text: 'Old retention target' }] },
+    });
+    await post(base, '/v1/sync/slack', {
+      tenantId: 'atlasweb',
+      userId: 'other',
+      wait: true,
+      options: { fixtures: [{ channelId: 'C1', timestamp: oldDate, text: 'Other user must stay' }] },
+    });
+
+    const store = app.locals.services.store;
+    for (const document of Object.values(store.state.documents)) {
+      document.updatedAt = oldDate;
+    }
+    for (const job of Object.values(store.state.jobs)) {
+      if (job.userId === 'rakib') {
+        job.createdAt = oldDate;
+        job.updatedAt = oldDate;
+      }
+    }
+    store.state.audit.unshift({ id: 'old_audit', createdAt: oldDate, eventType: 'search', tenantId: 'atlasweb', userId: 'rakib' });
+    await store.save();
+
+    const dryRun = await post(base, '/v1/retention/cleanup', {
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      dryRun: true,
+      documentRetentionDays: 90,
+      operationalRetentionDays: 30,
+      auditRetentionDays: 90,
+    });
+    assert.equal(dryRun.report.dryRun, true);
+    assert.equal(dryRun.report.deleted.documents, 1);
+    assert.ok(dryRun.report.deleted.jobs >= 1);
+
+    const beforeDeleteSearch = await post(base, '/v1/search', { tenantId: 'atlasweb', userId: 'rakib', query: 'Old retention target', sources: ['slack'] });
+    assert.equal(beforeDeleteSearch.results.length, 1);
+
+    const cleanup = await post(base, '/v1/retention/cleanup', {
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      dryRun: false,
+      documentRetentionDays: 90,
+      operationalRetentionDays: 30,
+      auditRetentionDays: 90,
+    });
+    assert.equal(cleanup.report.dryRun, false);
+    assert.equal(cleanup.report.deleted.documents, 1);
+    assert.equal(cleanup.report.deleted.chunks > 0, true);
+
+    const deletedSearch = await post(base, '/v1/search', { tenantId: 'atlasweb', userId: 'rakib', query: 'Old retention target', sources: ['slack'] });
+    assert.equal(deletedSearch.results.length, 0);
+    const otherSearch = await post(base, '/v1/search', { tenantId: 'atlasweb', userId: 'other', query: 'Other user must stay', sources: ['slack'] });
+    assert.equal(otherSearch.results.length, 1);
+
+    const audit = await request(base, '/v1/audit?tenantId=atlasweb&userId=rakib&eventType=retention_cleanup');
+    assert.equal(audit.success, true);
+    assert.equal(audit.events.length, 1);
+    assert.equal(audit.events[0].metadata.deleted.documents, 1);
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve));
     await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });

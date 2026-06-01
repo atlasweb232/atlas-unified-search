@@ -14,6 +14,8 @@ already have backend credentials/storage configured.
 - API bearer-token auth boundary
 - Tenant/user-scoped documents, chunks, jobs, search runs, assistant actions,
   artifacts, checkpoints, and audit events
+- Tenant/user-scoped `/v1/retention/cleanup` with dry-run support for indexed
+  data, operational records, artifact metadata, checkpoints, and audit rows
 - Federated email search through the existing Atlas email vector search service
 - Conference bridge Blob indexing
 - Knowledge base indexing from packaged `/app/docs`

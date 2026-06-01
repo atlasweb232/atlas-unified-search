@@ -12,6 +12,7 @@ The unified search service is production-testable when these gates are true:
 - `/v1/health` reports `queue.backend=azure-service-bus`.
 - Artifact Blob container exists and assistant artifacts are stored there.
 - `/v1/health` reports `artifacts.backend=azure-blob-artifact`.
+- `/v1/health` reports retention defaults, and `/v1/retention/cleanup` supports tenant/user-scoped dry-run and deletion using `UNIFIED_SEARCH_DOCUMENT_RETENTION_DAYS`, `UNIFIED_SEARCH_OPERATIONAL_RETENTION_DAYS`, and `UNIFIED_SEARCH_AUDIT_RETENTION_DAYS`.
 - Hosted frontend root `/` returns the React shell, built JS/CSS assets load, and protected `/v1/*` routes still reject unauthenticated callers.
 - Slack app is installed in the workspace with bot scopes listed in `docs/slack-gdrive-onboarding.md`.
 - `npm run slack:list-channels` can list bot-visible Slack channel IDs without printing the bot token; configured private channels must show `member:true`.

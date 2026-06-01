@@ -147,6 +147,62 @@ export class JsonSearchStore {
       .slice(0, Math.min(Math.max(Number(limit) || 100, 1), 500));
   }
 
+  cleanupRetention({ tenantId, userId, documentRetentionDays, operationalRetentionDays, auditRetentionDays, dryRun = false }) {
+    const documentCutoff = cutoffDate(documentRetentionDays);
+    const operationalCutoff = cutoffDate(operationalRetentionDays);
+    const auditCutoff = cutoffDate(auditRetentionDays);
+    const documents = Object.values(this.state.documents).filter((document) => (
+      inScope(document, tenantId, userId) && isOlderThan(document.updatedAt || document.timestamp, documentCutoff)
+    ));
+    const documentIds = new Set(documents.map((document) => document.id));
+    const checkpoints = Object.entries(this.state.checkpoints).filter(([key, checkpoint]) => (
+      key.includes(`:${tenantId}:${userId}:`) && isOlderThan(checkpoint.updatedAt || checkpoint.lastSyncedAt, operationalCutoff)
+    ));
+    const jobs = Object.values(this.state.jobs).filter((job) => inScope(job, tenantId, userId) && isOlderThan(job.updatedAt || job.createdAt, operationalCutoff));
+    const searchRuns = Object.values(this.state.searchRuns).filter((run) => inScope(run, tenantId, userId) && isOlderThan(run.updatedAt || run.createdAt, operationalCutoff));
+    const assistantActions = Object.values(this.state.assistantActions).filter((action) => inScope(action, tenantId, userId) && isOlderThan(action.completedAt || action.createdAt, operationalCutoff));
+    const artifacts = Object.values(this.state.artifacts).filter((artifact) => inScope(artifact, tenantId, userId) && isOlderThan(artifact.createdAt, operationalCutoff));
+    const audit = this.state.audit.filter((event) => inScope(event, tenantId, userId) && isOlderThan(event.createdAt, auditCutoff));
+
+    const report = {
+      tenantId,
+      userId,
+      dryRun: Boolean(dryRun),
+      cutoffs: {
+        documentsBefore: documentCutoff.toISOString(),
+        operationalBefore: operationalCutoff.toISOString(),
+        auditBefore: auditCutoff.toISOString(),
+      },
+      deleted: {
+        documents: documents.length,
+        chunks: Object.values(this.state.chunks).filter((chunk) => documentIds.has(chunk.documentId)).length,
+        checkpoints: checkpoints.length,
+        jobs: jobs.length,
+        searchRuns: searchRuns.length,
+        assistantActions: assistantActions.length,
+        artifacts: artifacts.length,
+        audit: audit.length,
+      },
+      documentIds: documents.map((document) => document.id),
+      artifactIds: artifacts.map((artifact) => artifact.id),
+    };
+
+    if (dryRun) return report;
+
+    for (const document of documents) delete this.state.documents[document.id];
+    for (const [chunkId, chunk] of Object.entries(this.state.chunks)) {
+      if (documentIds.has(chunk.documentId)) delete this.state.chunks[chunkId];
+    }
+    for (const [key] of checkpoints) delete this.state.checkpoints[key];
+    for (const job of jobs) delete this.state.jobs[job.id];
+    for (const run of searchRuns) delete this.state.searchRuns[run.id];
+    for (const action of assistantActions) delete this.state.assistantActions[action.id];
+    for (const artifact of artifacts) delete this.state.artifacts[artifact.id];
+    const auditIds = new Set(audit.map((event) => event.id));
+    this.state.audit = this.state.audit.filter((event) => !auditIds.has(event.id));
+    return report;
+  }
+
   createSearchRun({ tenantId, userId, query, selectedSources, filters }) {
     const id = `run_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const run = {
@@ -251,6 +307,22 @@ export class JsonSearchStore {
       }, {}),
     };
   }
+}
+
+function inScope(row, tenantId, userId) {
+  return row?.tenantId === tenantId && row?.userId === userId;
+}
+
+function cutoffDate(days) {
+  const parsed = Number(days);
+  const safeDays = Number.isFinite(parsed) && parsed > 0 ? parsed : 90;
+  return new Date(Date.now() - safeDays * 24 * 60 * 60 * 1000);
+}
+
+function isOlderThan(value, cutoff) {
+  if (!value) return false;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) && date.getTime() < cutoff.getTime();
 }
 
 export function redactObject(value) {

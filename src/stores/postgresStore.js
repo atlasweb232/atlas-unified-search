@@ -76,6 +76,76 @@ export class PostgresSearchStore extends JsonSearchStore {
     return { ...super.scopedStatus(scope), backend: this.name };
   }
 
+  async cleanupRetention({ tenantId, userId, documentRetentionDays, operationalRetentionDays, auditRetentionDays, dryRun = false }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const params = [tenantId, userId];
+      const documentCutoff = `${positiveDays(documentRetentionDays, 90)} days`;
+      const operationalCutoff = `${positiveDays(operationalRetentionDays, 30)} days`;
+      const auditCutoff = `${positiveDays(auditRetentionDays, 90)} days`;
+      const scoped = 'tenant_id = $1 AND user_id = $2';
+      const documentIds = await client.query(
+        `SELECT id FROM unified_documents WHERE ${scoped} AND COALESCE(updated_at, timestamp, created_at) < now() - $3::interval`,
+        [...params, documentCutoff],
+      );
+      const artifactIds = await client.query(
+        `SELECT id FROM unified_artifacts WHERE ${scoped} AND created_at < now() - $3::interval`,
+        [...params, operationalCutoff],
+      );
+      const counts = {
+        documents: documentIds.rowCount,
+        chunks: Number((await client.query(
+          `SELECT count(*)::int AS count FROM unified_chunks WHERE ${scoped} AND document_id = ANY($3::text[])`,
+          [...params, documentIds.rows.map((row) => row.id)],
+        )).rows[0]?.count || 0),
+        checkpoints: Number((await client.query(
+          `SELECT count(*)::int AS count FROM unified_checkpoints WHERE key LIKE $1 AND COALESCE((checkpoint->>'updatedAt')::timestamptz, (checkpoint->>'lastSyncedAt')::timestamptz, updated_at) < now() - $2::interval`,
+          [`%:${tenantId}:${userId}:%`, operationalCutoff],
+        )).rows[0]?.count || 0),
+        jobs: Number((await client.query(`SELECT count(*)::int AS count FROM unified_jobs WHERE ${scoped} AND updated_at < now() - $3::interval`, [...params, operationalCutoff])).rows[0]?.count || 0),
+        searchRuns: Number((await client.query(`SELECT count(*)::int AS count FROM unified_search_runs WHERE ${scoped} AND updated_at < now() - $3::interval`, [...params, operationalCutoff])).rows[0]?.count || 0),
+        assistantActions: Number((await client.query(`SELECT count(*)::int AS count FROM unified_assistant_actions WHERE ${scoped} AND COALESCE(completed_at, created_at) < now() - $3::interval`, [...params, operationalCutoff])).rows[0]?.count || 0),
+        artifacts: artifactIds.rowCount,
+        audit: Number((await client.query(`SELECT count(*)::int AS count FROM unified_audit WHERE ${scoped} AND created_at < now() - $3::interval`, [...params, auditCutoff])).rows[0]?.count || 0),
+      };
+      const report = {
+        tenantId,
+        userId,
+        dryRun: Boolean(dryRun),
+        cutoffs: {
+          documentsBefore: documentCutoff,
+          operationalBefore: operationalCutoff,
+          auditBefore: auditCutoff,
+        },
+        deleted: counts,
+        documentIds: documentIds.rows.map((row) => row.id),
+        artifactIds: artifactIds.rows.map((row) => row.id),
+      };
+      if (!dryRun) {
+        await client.query(`DELETE FROM unified_chunks WHERE ${scoped} AND document_id = ANY($3::text[])`, [...params, report.documentIds]);
+        await client.query(`DELETE FROM unified_documents WHERE id = ANY($1::text[])`, [report.documentIds]);
+        await client.query(
+          `DELETE FROM unified_checkpoints WHERE key LIKE $1 AND COALESCE((checkpoint->>'updatedAt')::timestamptz, (checkpoint->>'lastSyncedAt')::timestamptz, updated_at) < now() - $2::interval`,
+          [`%:${tenantId}:${userId}:%`, operationalCutoff],
+        );
+        await client.query(`DELETE FROM unified_jobs WHERE ${scoped} AND updated_at < now() - $3::interval`, [...params, operationalCutoff]);
+        await client.query(`DELETE FROM unified_search_runs WHERE ${scoped} AND updated_at < now() - $3::interval`, [...params, operationalCutoff]);
+        await client.query(`DELETE FROM unified_assistant_actions WHERE ${scoped} AND COALESCE(completed_at, created_at) < now() - $3::interval`, [...params, operationalCutoff]);
+        await client.query(`DELETE FROM unified_artifacts WHERE id = ANY($1::text[])`, [report.artifactIds]);
+        await client.query(`DELETE FROM unified_audit WHERE ${scoped} AND created_at < now() - $3::interval`, [...params, auditCutoff]);
+      }
+      await client.query('COMMIT');
+      if (!dryRun) await this.loadStateFromPostgres();
+      return report;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async loadStateFromPostgres() {
     const [documents, chunks, checkpoints, jobs, runs, actions, artifacts, audit] = await Promise.all([
       this.pool.query('SELECT * FROM unified_documents'),
@@ -224,4 +294,9 @@ function nullableIso(value) {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function positiveDays(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
