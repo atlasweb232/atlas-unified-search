@@ -124,6 +124,7 @@ if (readinessBySource.slack?.ready) {
     },
   });
 } else {
+  await assertUnreadyConnectorReindexBlocked('slack', readinessBySource.slack);
   console.log('slack live connector skipped', { reason: 'missing Slack bot token/channel IDs or readiness failed', status: readinessBySource.slack?.status || 'not_reported' });
 }
 
@@ -137,6 +138,7 @@ if (readinessBySource.google_drive?.ready) {
     },
   });
 } else {
+  await assertUnreadyConnectorReindexBlocked('google_drive', readinessBySource.google_drive);
   console.log('google drive live connector skipped', { reason: 'missing Google OAuth/service-account config or readiness failed', status: readinessBySource.google_drive?.status || 'not_reported' });
 }
 
@@ -314,6 +316,24 @@ async function liveConnectorSmoke({ source, query, options = {} }) {
     indexed: reindex.data.indexed,
     count: search.data.results.length,
     query,
+  });
+}
+
+async function assertUnreadyConnectorReindexBlocked(source, readinessCheck) {
+  const blocked = await request(`/v1/reindex/${source}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      tenantId: `${tenantId}_${source}_blocked_probe`,
+      userId: `${userId}_${source}_blocked_probe`,
+      wait: false,
+    }),
+  });
+  assert(blocked.status === 409, `${source} unready reindex should return 409, got ${blocked.status}: ${JSON.stringify(blocked.data)}`);
+  assert(blocked.data.details?.source === source, `${source} blocked response did not include source details: ${JSON.stringify(blocked.data)}`);
+  assert(blocked.data.details?.status === readinessCheck?.status, `${source} blocked status did not match readiness: ${JSON.stringify({ readiness: readinessCheck, blocked: blocked.data })}`);
+  console.log(`${source} unready live reindex blocked`, {
+    status: blocked.data.details.status,
+    missing: blocked.data.details.missing || [],
   });
 }
 

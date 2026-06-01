@@ -11,9 +11,21 @@ export async function apiRequest(apiBaseUrl, path, options = {}) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.success === false) {
-    throw new Error(data.error || data.message || 'Request failed');
+    const error = new Error(formatApiError(data));
+    error.status = response.status;
+    error.details = data.details;
+    throw error;
   }
   return data;
+}
+
+function formatApiError(data) {
+  const message = data.error || data.message || 'Request failed';
+  const missing = Array.isArray(data.details?.missing) && data.details.missing.length
+    ? ` Missing: ${data.details.missing.join(', ')}.`
+    : '';
+  const status = data.details?.status ? ` Status: ${data.details.status}.` : '';
+  return `${message}.${status}${missing}`.replace('..', '.');
 }
 
 export const sourceMeta = {
