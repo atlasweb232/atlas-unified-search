@@ -51,6 +51,9 @@ export function loadConfig() {
       required: requireAuth,
       token: authToken,
     },
+    cors: {
+      origins: list('UNIFIED_SEARCH_CORS_ORIGINS'),
+    },
     sourcePermissions: json('UNIFIED_SEARCH_SOURCE_PERMISSIONS', {}),
     searchRun: {
       sourceTimeoutMs: number('UNIFIED_SEARCH_SOURCE_TIMEOUT_MS', 30000),

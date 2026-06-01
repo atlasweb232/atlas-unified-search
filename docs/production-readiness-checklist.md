@@ -4,6 +4,7 @@ The unified search service is production-testable when these gates are true:
 
 - API Container App is deployed from this repo and `/v1/health` is public.
 - `UNIFIED_SEARCH_AUTH_TOKEN` is configured and protected API routes reject unauthenticated requests.
+- `UNIFIED_SEARCH_CORS_ORIGINS` is configured in authenticated production deployments so browsers only receive CORS approval from known frontend origins.
 - Postgres flexible server has `pgvector` installed and `npm run db:migrate` has completed.
 - `/v1/health` reports `index.backend=postgres-pgvector`.
 - Public `/v1/health` does not expose connector configuration, global document/chunk/job counts, or per-source corpus counts; use protected `/v1/index/status?tenantId=&userId=` for scoped index counts.

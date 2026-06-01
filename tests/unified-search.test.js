@@ -17,6 +17,7 @@ function config(dataDir) {
     openaiApiKey: '',
     embeddingModel: 'test',
     auth: { required: false, token: '' },
+    cors: { origins: [] },
     sourcePermissions: {},
     syncRetry: { maxAttempts: 3, baseDelayMs: 1 },
     retention: { documentDays: 90, operationalDays: 30, auditDays: 90 },
@@ -44,6 +45,7 @@ test('api auth boundary blocks protected endpoints when enabled', async () => {
     const health = await fetch(`${base}/v1/health`).then((response) => response.json());
     assert.equal(health.success, true);
     assert.equal(health.auth.required, true);
+    assert.equal(health.cors.ready, false);
     assert.equal(health.schedules.ready, true);
     assert.equal(health.schedules.detail, 'not_configured_manual_only');
 
@@ -80,6 +82,39 @@ test('api auth boundary blocks protected endpoints when enabled', async () => {
     assert.ok(slack.missing.includes('SLACK_BOT_TOKEN'));
     assert.match(slack.nextAction, /Slack app/);
     assert.ok(slack.liveSmoke.env.includes('UNIFIED_SEARCH_SMOKE_SLACK_CHANNEL_IDS'));
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
+test('configured CORS allowlist only exposes allowed origins', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-cors-'));
+  let server;
+  try {
+    const app = await createApp({
+      ...config(dir),
+      auth: { required: true, token: 'test-token' },
+      cors: { origins: ['https://allowed.example'] },
+    });
+    server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+
+    const allowed = await fetch(`${base}/v1/health`, {
+      headers: { Origin: 'https://allowed.example' },
+    });
+    assert.equal(allowed.status, 200);
+    assert.equal(allowed.headers.get('access-control-allow-origin'), 'https://allowed.example');
+    const allowedBody = await allowed.json();
+    assert.equal(allowedBody.cors.ready, true);
+    assert.equal(allowedBody.cors.allowedOriginCount, 1);
+
+    const denied = await fetch(`${base}/v1/health`, {
+      headers: { Origin: 'https://blocked.example' },
+    });
+    assert.equal(denied.status, 200);
+    assert.equal(denied.headers.get('access-control-allow-origin'), null);
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });

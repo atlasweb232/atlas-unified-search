@@ -148,6 +148,8 @@ function summarizeHealth(result) {
     ok: Boolean(result.ok),
     service: body.service || '',
     authRequired: Boolean(body.auth?.required),
+    corsReady: Boolean(body.cors?.ready),
+    corsDetail: body.cors?.detail || '',
     indexBackend: body.index?.backend || '',
     queueBackend: body.queue?.backend || '',
     artifactBackend: body.artifacts?.backend || '',
@@ -167,6 +169,7 @@ function summarizeReadiness(status) {
     && status.queue.scheduled === 0;
   const healthReady = status.publicHealth.ok
     && status.publicHealth.authRequired
+    && status.publicHealth.corsReady
     && status.publicHealth.indexBackend === 'postgres-pgvector'
     && status.publicHealth.queueBackend === 'azure-service-bus'
     && status.publicHealth.artifactBackend === 'azure-blob-artifact'

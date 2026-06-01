@@ -18,7 +18,7 @@ import { SearchEngine } from './store.js';
 
 export async function createApp(config) {
   const app = express();
-  app.use(cors());
+  app.use(cors(corsOptions(config)));
   app.use(express.json({
     limit: '4mb',
     verify: (req, _res, buffer) => {
@@ -51,6 +51,7 @@ export async function createApp(config) {
       embedding: { model: embedder.model, version: embedder.version },
       index: publicIndexStatus(store.status()),
       auth: { required: Boolean(config.auth?.required) },
+      cors: corsStatus(config),
       queue: { backend: queue.name },
       schedules: scheduleStatus(config),
       artifacts: { backend: assistant.artifactProvider.name, configured: assistant.artifactProvider.configured() },
@@ -780,6 +781,7 @@ function productionReadinessReport({ config, store, queue, assistant, connectorC
   const checksBySource = Object.fromEntries(connectorChecks.map((check) => [check.source, check]));
   const infrastructure = {
     apiAuth: { ready: Boolean(config.auth?.required), detail: config.auth?.required ? 'required' : 'not_required' },
+    cors: corsStatus(config),
     index: { ready: store.status().backend === 'postgres-pgvector', detail: store.status().backend },
     queue: { ready: queue.name === 'azure-service-bus', detail: queue.name },
     artifacts: { ready: assistant.artifactProvider.name === 'azure-blob-artifact' && assistant.artifactProvider.configured(), detail: assistant.artifactProvider.name },
@@ -854,6 +856,27 @@ function retentionStatus(config) {
       documentDays,
       operationalDays,
       auditDays,
+    },
+  };
+}
+
+function corsStatus(config) {
+  const origins = config.cors?.origins || [];
+  return {
+    ready: !config.auth?.required || origins.length > 0,
+    detail: origins.length ? 'allowlist_configured' : 'allow_all_origins',
+    allowedOriginCount: origins.length,
+  };
+}
+
+function corsOptions(config) {
+  const allowedOrigins = config.cors?.origins || [];
+  if (!allowedOrigins.length) return {};
+  const allowed = new Set(allowedOrigins);
+  return {
+    origin(origin, callback) {
+      if (!origin || allowed.has(origin)) return callback(null, true);
+      return callback(null, false);
     },
   };
 }
