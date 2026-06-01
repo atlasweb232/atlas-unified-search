@@ -12,6 +12,7 @@
     "start:scheduler": "node src/scheduler.js",
     "start:api-scheduler": "node src/apiScheduler.js",
     "build": "vite build frontend",
+    "azure:promote-image": "bash infrastructure/azure/promote-image.sh",
     "db:migrate": "node scripts/migrate-postgres.mjs",
     "audit:production-config": "node scripts/audit-production-config.mjs",
     "validate:connector-credentials": "node scripts/validate-connector-credentials.mjs",

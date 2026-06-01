@@ -64,6 +64,26 @@ Deploy the background sync worker from the same image:
 ./infrastructure/azure/deploy-worker-containerapp.sh
 ```
 
+For an existing production deployment, prefer image promotion over the full
+deploy scripts. Promotion updates the API and worker image revisions while
+checking that existing Container App env vars and secret refs did not change.
+Use this after `az acr build` when Azure already has the production secrets and
+connector env bindings you want to preserve:
+
+```bash
+export IMAGE_TAG='202606010132-ui-auth-boundary-620c625'
+npm run azure:promote-image
+```
+
+To preview the exact apps and image without updating Azure:
+
+```bash
+DRY_RUN=true IMAGE_TAG='202606010132-ui-auth-boundary-620c625' npm run azure:promote-image
+```
+
+Set `PROMOTE_SCHEDULER=true` only when the scheduler should move to the same
+image at the same time. The default promotes the API and worker only.
+
 Optional scheduled sync process:
 
 ```bash
