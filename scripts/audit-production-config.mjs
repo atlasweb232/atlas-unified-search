@@ -13,6 +13,7 @@ const scheduler = loadContainerApp(schedulerApp, { optional: true });
 const apiEnv = envMap(api);
 const workerEnv = envMap(worker);
 const schedulerEnv = scheduler ? envMap(scheduler) : {};
+const gdriveWatch = gdriveWatchStatus(apiEnv);
 
 const report = {
   generatedAt: new Date().toISOString(),
@@ -116,6 +117,9 @@ const report = {
       ]),
     ],
   },
+  providerRuntime: {
+    gdriveWatch,
+  },
 };
 
 if (baseUrl && token) {
@@ -134,6 +138,8 @@ report.summary = {
   productionReadinessEndpointReady: Boolean(report.runtime?.productionReadiness?.readyForProductionTesting),
   productionComplete: Boolean(report.runtime?.productionReadiness?.productionComplete),
   schedulerReady: report.gates.scheduler.every((gate) => gateReady(gate)),
+  gdriveWatchRenewalReady: gdriveWatch.ready,
+  gdriveWatchRenewalStatus: gdriveWatch.status,
 };
 
 console.log(JSON.stringify(redact(report), null, 2));
@@ -208,6 +214,46 @@ function alternativeGate(name, alternatives) {
 
 function gateReady(gate) {
   return gate.ready ?? gate.satisfied ?? gate.present ?? false;
+}
+
+function gdriveWatchStatus(env) {
+  const expiration = env.GDRIVE_WATCH_EXPIRATION?.value || '';
+  const resourceId = env.GDRIVE_WATCH_RESOURCE_ID?.value || '';
+  const startPageToken = env.GDRIVE_WATCH_START_PAGE_TOKEN?.value || '';
+  if (!expiration && !resourceId && !startPageToken) {
+    return {
+      ready: false,
+      status: 'not_configured',
+      missing: ['GDRIVE_WATCH_EXPIRATION', 'GDRIVE_WATCH_RESOURCE_ID', 'GDRIVE_WATCH_START_PAGE_TOKEN'],
+      renewWithinHours: 24,
+    };
+  }
+  const expiresAtMs = Date.parse(expiration);
+  if (!Number.isFinite(expiresAtMs)) {
+    return {
+      ready: false,
+      status: 'invalid_expiration',
+      expiration,
+      missing: [
+        ...(!resourceId ? ['GDRIVE_WATCH_RESOURCE_ID'] : []),
+        ...(!startPageToken ? ['GDRIVE_WATCH_START_PAGE_TOKEN'] : []),
+      ],
+      renewWithinHours: 24,
+    };
+  }
+  const hoursRemaining = (expiresAtMs - Date.now()) / 36e5;
+  const missing = [
+    ...(!resourceId ? ['GDRIVE_WATCH_RESOURCE_ID'] : []),
+    ...(!startPageToken ? ['GDRIVE_WATCH_START_PAGE_TOKEN'] : []),
+  ];
+  return {
+    ready: missing.length === 0 && hoursRemaining > 24,
+    status: missing.length ? 'missing_watch_metadata' : (hoursRemaining <= 0 ? 'expired' : (hoursRemaining <= 24 ? 'renew_soon' : 'ok')),
+    expiration,
+    hoursRemaining: Math.round(hoursRemaining * 10) / 10,
+    missing,
+    renewWithinHours: 24,
+  };
 }
 
 async function runtimeReadiness(url, authToken) {

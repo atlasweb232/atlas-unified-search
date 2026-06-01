@@ -218,6 +218,18 @@ includes `optionalPersistence.GDRIVE_WATCH_RESOURCE_ID`,
 `optionalPersistence.GDRIVE_WATCH_START_PAGE_TOKEN`, and the channel expiration
 timestamp for audit/renewal tracking.
 
+Wire the watch metadata as ordinary env values when promoting the connector:
+
+```bash
+export GDRIVE_WEBHOOK_CHANNEL_IDS='<wireEnv.GDRIVE_WEBHOOK_CHANNEL_IDS>'
+export GDRIVE_WATCH_RESOURCE_ID='<optionalPersistence.GDRIVE_WATCH_RESOURCE_ID>'
+export GDRIVE_WATCH_START_PAGE_TOKEN='<optionalPersistence.GDRIVE_WATCH_START_PAGE_TOKEN>'
+export GDRIVE_WATCH_EXPIRATION='<optionalPersistence.GDRIVE_WATCH_EXPIRATION>'
+```
+
+`npm run audit:production-config` reports whether the watch metadata is present
+and whether the channel should be renewed within 24 hours.
+
 7. Validate credentials before wiring them into Azure:
 
 ```bash

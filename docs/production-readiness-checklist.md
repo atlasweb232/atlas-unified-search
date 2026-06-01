@@ -20,6 +20,7 @@ The unified search service is production-testable when these gates are true:
 - `npm run slack:list-channels` can list bot-visible Slack channel IDs without printing the bot token; configured private channels must show `member:true`.
 - Google OAuth consent and refresh token are configured for Drive read access.
 - `npm run gdrive:create-watch` has created a Google Drive changes watch channel, and the returned channel ID is wired as `GDRIVE_WEBHOOK_CHANNEL_IDS` before strict webhook readiness is required.
+- Google Drive watch metadata from `npm run gdrive:create-watch` is wired as `GDRIVE_WATCH_RESOURCE_ID`, `GDRIVE_WATCH_START_PAGE_TOKEN`, and `GDRIVE_WATCH_EXPIRATION`; `npm run audit:production-config` reports `gdriveWatchRenewalStatus=ok` or flags renewal before the watch silently expires.
 - Email results use `EMAIL_VECTOR_SEARCH_URL` to federate against the existing Atlas email vector service.
 - Email production smoke verifies the federated email source-agent path; set `UNIFIED_SEARCH_SMOKE_REQUIRE_EMAIL_RESULTS=true` with a known indexed test email before claiming email corpus content coverage.
 - Conference bridge transcripts use `AZURE_STORAGE_CONNECTION_STRING` and `CONFERENCE_BLOB_CONTAINERS`; when configured, production smoke reindexes and searches a scoped Blob prefix.
