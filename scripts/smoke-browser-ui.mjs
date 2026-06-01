@@ -3,6 +3,8 @@ import { chromium } from 'playwright-core';
 const frontend = requireEnv('UNIFIED_SEARCH_LOCAL_FRONTEND_URL').replace(/\/$/, '');
 const token = requireEnv('UNIFIED_SEARCH_AUTH_TOKEN');
 const executablePath = process.env.CHROME_PATH || '/usr/bin/google-chrome';
+const tenantId = process.env.UNIFIED_SEARCH_SMOKE_TENANT_ID || 'atlasweb';
+const userId = process.env.UNIFIED_SEARCH_SMOKE_USER_ID || await resolveSmokeUserId();
 
 const browser = await chromium.launch({
   executablePath,
@@ -19,7 +21,7 @@ try {
   page.on('pageerror', (error) => {
     browserEvents.push({ type: 'pageerror', text: error.message });
   });
-  await page.goto(frontend, { waitUntil: 'networkidle' });
+  await page.goto(withRuntimeScope(frontend, { tenantId, userId }), { waitUntil: 'networkidle' });
 
   await page.getByTestId('api-token-input').fill(token);
   await expectText(page, '[data-testid="connector-email"]', 'Federated vector space');
@@ -79,6 +81,22 @@ async function expectText(page, selector, text, timeout = 15000) {
     { selector, text },
     { timeout },
   );
+}
+
+async function resolveSmokeUserId() {
+  const response = await fetch(`${frontend}/v1/connectors/readiness?source=email`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const body = await response.json().catch(() => ({}));
+  const email = body.checks?.find((check) => check.source === 'email');
+  return email?.details?.readinessUserEmail || 'user-required';
+}
+
+function withRuntimeScope(baseUrl, scope) {
+  const url = new URL(baseUrl);
+  url.searchParams.set('tenantId', scope.tenantId);
+  url.searchParams.set('userId', scope.userId);
+  return url.toString();
 }
 
 function requireEnv(name) {
