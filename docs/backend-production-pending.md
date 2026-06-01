@@ -16,6 +16,9 @@ already have backend credentials/storage configured.
   artifacts, checkpoints, and audit events
 - Tenant/user-scoped `/v1/retention/cleanup` with dry-run support for indexed
   data, operational records, artifact metadata, checkpoints, and audit rows
+- Scheduler support for `action: retention_cleanup`, using the API-backed
+  scheduler in Azure or the direct-store scheduler for intentionally privileged
+  deployments
 - Federated email search through the existing Atlas email vector search service
 - Conference bridge Blob indexing
 - Knowledge base indexing from packaged `/app/docs`

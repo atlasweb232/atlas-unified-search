@@ -29,8 +29,9 @@ console.log('Unified search API scheduler started', {
 
 for (const schedule of schedules) {
   const run = () => runSchedule(schedule).catch((error) => {
-    console.error('Scheduled API sync failed', {
+    console.error('Scheduled API task failed', {
       schedule: schedule.name,
+      action: schedule.action,
       source: schedule.source,
       tenantId: schedule.tenantId,
       userId: schedule.userId,
@@ -43,6 +44,28 @@ for (const schedule of schedules) {
 
 async function runSchedule(schedule) {
   if (shuttingDown) return;
+  if (schedule.action === 'retention_cleanup') {
+    const response = await request('/v1/retention/cleanup', {
+      method: 'POST',
+      body: {
+        tenantId: schedule.tenantId,
+        userId: schedule.userId,
+        dryRun: Boolean(schedule.options?.dryRun),
+        documentRetentionDays: schedule.options?.documentRetentionDays,
+        operationalRetentionDays: schedule.options?.operationalRetentionDays,
+        auditRetentionDays: schedule.options?.auditRetentionDays,
+      },
+    });
+    console.log('Scheduled API retention cleanup completed', {
+      schedule: schedule.name,
+      tenantId: schedule.tenantId,
+      userId: schedule.userId,
+      dryRun: response.report?.dryRun,
+      deleted: response.report?.deleted,
+    });
+    return;
+  }
+
   const readiness = await request(`/v1/connectors/readiness?source=${encodeURIComponent(schedule.source)}`);
   const check = readiness.checks?.[0];
   if (!check?.ready) {
@@ -67,6 +90,7 @@ async function runSchedule(schedule) {
 
   console.log('Scheduled API sync queued', {
     schedule: schedule.name,
+    action: schedule.action,
     jobId: response.job?.id,
     source: schedule.source,
     tenantId: schedule.tenantId,

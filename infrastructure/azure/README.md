@@ -106,10 +106,28 @@ export UNIFIED_SEARCH_SYNC_SCHEDULES='[
     "userId": "shared",
     "everySeconds": 86400,
     "reindex": true
+  },
+  {
+    "name": "atlasweb-retention-nightly",
+    "action": "retention_cleanup",
+    "tenantId": "atlasweb",
+    "userId": "rakib.mahmood@tridentinter.io",
+    "everySeconds": 86400,
+    "runOnStart": false,
+    "options": {
+      "dryRun": true,
+      "documentRetentionDays": 90,
+      "operationalRetentionDays": 30,
+      "auditRetentionDays": 90
+    }
   }
 ]'
 node src/scheduler.js
 ```
+
+Retention cleanup schedules should start with `options.dryRun: true` in
+production. After reviewing the `/v1/audit` `retention_cleanup_dry_run` events
+and deleted counts, switch that schedule to `dryRun: false` for active cleanup.
 
 For Azure, prefer the API-backed scheduler unless the scheduler must connect to
 Postgres/Service Bus directly. It runs as a separate single-replica Container

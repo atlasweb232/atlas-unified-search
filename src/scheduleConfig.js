@@ -19,6 +19,7 @@ export function parseSyncSchedules(raw, { minIntervalSeconds = DEFAULT_MIN_INTER
 export function summarizeSchedules(schedules) {
   return schedules.map((item) => ({
     name: item.name,
+    action: item.action,
     source: item.source,
     tenantId: item.tenantId,
     userId: item.userId,
@@ -30,7 +31,11 @@ export function summarizeSchedules(schedules) {
 
 function normalizeSchedule(item, index, minIntervalSeconds) {
   if (!item || typeof item !== 'object') throw new Error(`schedule[${index}] must be an object`);
-  const source = stringField(item, 'source', index);
+  const action = stringOrDefault(item.action, 'sync');
+  if (!['sync', 'retention_cleanup'].includes(action)) {
+    throw new Error(`schedule[${index}].action must be sync or retention_cleanup`);
+  }
+  const source = action === 'retention_cleanup' ? stringOrDefault(item.source, 'retention') : stringField(item, 'source', index);
   const tenantId = stringField(item, 'tenantId', index);
   const userId = stringField(item, 'userId', index);
   const everySeconds = Number(item.everySeconds || item.intervalSeconds || item.interval || 0);
@@ -38,7 +43,8 @@ function normalizeSchedule(item, index, minIntervalSeconds) {
     throw new Error(`schedule[${index}].everySeconds must be at least ${minIntervalSeconds}`);
   }
   return {
-    name: item.name || `${tenantId}:${userId}:${source}`,
+    name: item.name || `${tenantId}:${userId}:${action}:${source}`,
+    action,
     source,
     tenantId,
     userId,
@@ -56,4 +62,8 @@ function stringField(item, field, index) {
     throw new Error(`schedule[${index}].${field} is required`);
   }
   return value.trim();
+}
+
+function stringOrDefault(value, fallback) {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }

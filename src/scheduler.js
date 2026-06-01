@@ -32,8 +32,9 @@ console.log('Unified search scheduler started', {
 
 for (const schedule of schedules) {
   const run = () => runSchedule(schedule).catch((error) => {
-    console.error('Scheduled sync failed', {
+    console.error('Scheduled task failed', {
       schedule: schedule.name,
+      action: schedule.action,
       source: schedule.source,
       tenantId: schedule.tenantId,
       userId: schedule.userId,
@@ -46,6 +47,33 @@ for (const schedule of schedules) {
 
 async function runSchedule(schedule) {
   if (shuttingDown) return;
+  if (schedule.action === 'retention_cleanup') {
+    await store.refresh?.();
+    const report = await store.cleanupRetention({
+      tenantId: schedule.tenantId,
+      userId: schedule.userId,
+      documentRetentionDays: schedule.options?.documentRetentionDays || config.retention?.documentDays,
+      operationalRetentionDays: schedule.options?.operationalRetentionDays || config.retention?.operationalDays,
+      auditRetentionDays: schedule.options?.auditRetentionDays || config.retention?.auditDays,
+      dryRun: Boolean(schedule.options?.dryRun),
+    });
+    store.audit({
+      eventType: report.dryRun ? 'scheduled_retention_cleanup_dry_run' : 'scheduled_retention_cleanup',
+      tenantId: schedule.tenantId,
+      userId: schedule.userId,
+      metadata: { schedule: schedule.name, deleted: report.deleted, cutoffs: report.cutoffs },
+    });
+    await store.save();
+    console.log('Scheduled retention cleanup completed', {
+      schedule: schedule.name,
+      tenantId: schedule.tenantId,
+      userId: schedule.userId,
+      dryRun: report.dryRun,
+      deleted: report.deleted,
+    });
+    return;
+  }
+
   const connector = registry.get(schedule.source);
   const readiness = await registry.readiness(schedule.source);
   if (!readiness[0]?.ready) {
