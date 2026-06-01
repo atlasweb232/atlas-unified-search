@@ -93,6 +93,27 @@ paths:
       responses:
         "202":
           description: Sync accepted
+  /v1/events/{source}:
+    post:
+      summary: Accept an authenticated connector event and enqueue a scoped sync job
+      description: >
+        Converts provider notifications such as Slack message events, Google
+        Drive changes, conference blob notifications, or CMS/data-fabric events
+        into tenant/user-scoped sync jobs. The endpoint uses the same API auth,
+        source permission, and connector readiness gates as live sync. Fixture
+        payloads are ignored so events cannot bypass live connector readiness.
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [slack, google_drive, conference_bridge, email, knowledge_base, data_fabric]
+      responses:
+        "202":
+          description: Event accepted and sync queued
+        "409":
+          description: Connector is not ready for live event ingestion
   /v1/reindex/{source}:
     post:
       summary: Delete scoped source data, reset source checkpoints, and start a full source sync

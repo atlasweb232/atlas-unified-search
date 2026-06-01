@@ -121,6 +121,37 @@ export async function createApp(config) {
     }
   });
 
+  app.post('/v1/events/:source', async (req, res) => {
+    const { tenantId, userId, event = {}, options = {}, wait = false } = req.body || {};
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    }
+    if (!sourceAllowed(config, tenantId, userId, req.params.source)) {
+      return res.status(403).json({ success: false, error: `Source is not enabled for this user: ${req.params.source}` });
+    }
+    try {
+      const eventOptions = connectorEventOptions(req.params.source, event, options);
+      await requireReadyConnector(registry, req.params.source, eventOptions);
+      await refreshStore(store);
+      store.audit({
+        eventType: 'connector_event_received',
+        tenantId,
+        userId,
+        source: req.params.source,
+        metadata: eventOptions.eventTrigger,
+      });
+      await store.save();
+      const job = await jobs.enqueue({ source: req.params.source, tenantId, userId, options: eventOptions, autoStart: !wait });
+      if (wait) {
+        const result = await jobs.run(job.id, { source: req.params.source, tenantId, userId, options: eventOptions });
+        return res.json({ success: true, job: result.job, indexed: result.indexed, eventTrigger: eventOptions.eventTrigger });
+      }
+      return res.status(202).json({ success: true, job, eventTrigger: eventOptions.eventTrigger });
+    } catch (error) {
+      return res.status(error.statusCode || 400).json({ success: false, error: error.message, details: error.details || undefined });
+    }
+  });
+
   app.post('/v1/search', async (req, res) => {
     const { tenantId, userId, query, sources, filters, limit } = req.body || {};
     if (!tenantId || !userId || !query) {
@@ -317,6 +348,56 @@ function publicIndexStatus(status) {
   return {
     backend: status.backend,
     ready: ['postgres-pgvector', 'json'].includes(status.backend),
+  };
+}
+
+function connectorEventOptions(source, event = {}, options = {}) {
+  const trigger = eventTriggerSummary(source, event);
+  const { fixtures: _fixtures, ...safeOptions } = options || {};
+  const base = { ...safeOptions, eventTrigger: trigger };
+  if (source === 'slack') {
+    return {
+      ...base,
+      ...(event.channel ? { channelIds: [event.channel] } : {}),
+      ...(event.ts || event.event_ts ? { sinceTs: event.thread_ts || event.ts || event.event_ts } : {}),
+      limit: options.limit || 50,
+    };
+  }
+  if (source === 'google_drive') {
+    return {
+      ...base,
+      ...(event.folderIds?.length ? { folderIds: event.folderIds } : {}),
+      ...(event.modifiedTime ? { modifiedAfter: event.modifiedTime } : {}),
+      limit: options.limit || 50,
+    };
+  }
+  if (source === 'conference_bridge') {
+    return {
+      ...base,
+      ...(event.prefix || event.blobPrefix ? { prefix: event.prefix || event.blobPrefix } : {}),
+    };
+  }
+  if (source === 'data_fabric') {
+    return {
+      ...base,
+      ...(event.dataset ? { dataset: event.dataset } : {}),
+      limit: options.limit || 50,
+    };
+  }
+  return base;
+}
+
+function eventTriggerSummary(source, event = {}) {
+  return {
+    source,
+    eventType: event.type || event.eventType || 'connector_event',
+    eventId: event.event_id || event.eventId || event.id || '',
+    receivedAt: new Date().toISOString(),
+    channelId: event.channel || '',
+    fileId: event.fileId || event.file_id || '',
+    resourceId: event.resourceId || event.resource_id || '',
+    dataset: event.dataset || '',
+    prefix: event.prefix || event.blobPrefix || '',
   };
 }
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -303,6 +303,13 @@ test('source permissions block disallowed sync and search sources', async () => 
     });
     assert.equal(denied.status, 403);
 
+    const deniedEvent = await fetch(`${base}/v1/events/slack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'atlasweb', userId: 'rakib', event: { type: 'message', channel: 'C1' } }),
+    });
+    assert.equal(deniedEvent.status, 403);
+
     await post(base, '/v1/sync/email', {
       tenantId: 'atlasweb',
       userId: 'rakib',
@@ -319,6 +326,67 @@ test('source permissions block disallowed sync and search sources', async () => 
       body: JSON.stringify({ tenantId: 'atlasweb', userId: 'other', query: 'data' }),
     });
     assert.equal(noPermission.status, 403);
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
+test('connector events enqueue scoped sync jobs and keep live auth gates', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-events-'));
+  let server;
+  try {
+    const kbRoot = path.join(dir, 'kb');
+    await mkdir(kbRoot, { recursive: true });
+    await writeFile(path.join(kbRoot, 'event-runbook.md'), 'Event ingestion should enqueue a scoped knowledge base sync job.');
+    const app = await createApp({
+      ...config(dir),
+      knowledgeBase: { root: kbRoot },
+    });
+    server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+
+    const event = await post(base, '/v1/events/knowledge_base', {
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      wait: true,
+      event: { type: 'file.changed', id: 'kb-event-1', prefix: 'docs/' },
+    });
+    assert.equal(event.success, true);
+    assert.equal(event.job.status, 'completed');
+    assert.equal(event.indexed, 1);
+    assert.equal(event.eventTrigger.eventType, 'file.changed');
+    assert.equal(event.eventTrigger.eventId, 'kb-event-1');
+
+    const search = await post(base, '/v1/search', {
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      query: 'scoped knowledge base sync',
+      sources: ['knowledge_base'],
+    });
+    assert.equal(search.results[0].source, 'knowledge_base');
+
+    const audit = await request(base, '/v1/audit?tenantId=atlasweb&userId=rakib&eventType=connector_event_received');
+    assert.equal(audit.events.length, 1);
+    assert.equal(audit.events[0].metadata.eventId, 'kb-event-1');
+
+    const blocked = await fetch(`${base}/v1/events/slack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tenantId: 'atlasweb',
+        userId: 'rakib',
+        wait: true,
+        event: { type: 'message', channel: 'C1', ts: '1780278000.000100' },
+        options: { fixtures: [{ channelId: 'C1', text: 'fixture bypass must not run' }] },
+      }),
+    });
+    assert.equal(blocked.status, 409);
+    const blockedBody = await blocked.json();
+    assert.equal(blockedBody.details.source, 'slack');
+    assert.equal(blockedBody.details.status, 'missing_configuration');
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     await new Promise((resolve) => setTimeout(resolve, 25));

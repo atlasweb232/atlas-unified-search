@@ -189,8 +189,9 @@ and share target Drive folders/files with the service account email.
 
 ## Background Vectorization Path
 
-Current production deployment supports background jobs through `/v1/sync/:source`
-and `/v1/reindex/:source`:
+Current production deployment supports background jobs through `/v1/sync/:source`,
+`/v1/reindex/:source`, and authenticated connector events through
+`/v1/events/:source`:
 
 - Azure Service Bus queue `unified-search-sync`
 - single-replica API-backed scheduler app
@@ -198,6 +199,10 @@ and `/v1/reindex/:source`:
 - tenant/user/source-scoped checkpoints
 - worker-side vectorization and assistant artifact generation
 
-Later multi-user onboarding should add Slack Events API and Google Drive
-Changes/watch ingestion so changes flow into Service Bus near real time instead
-of relying only on scheduled scans.
+Provider webhook receivers should verify provider signatures, map the provider
+payload to `{ tenantId, userId, event, options }`, and call `/v1/events/:source`
+with the unified search API token. The event endpoint does not accept fixture
+bypasses and still returns `409` until the live connector readiness gate passes.
+This lets Slack Events API, Google Drive Changes/watch, Blob Event Grid, and
+future tenant onboarding services feed Service Bus near real time without
+exposing connector secrets to browsers.
