@@ -6,6 +6,7 @@ The unified search service is production-testable when these gates are true:
 - `UNIFIED_SEARCH_AUTH_TOKEN` is configured and protected API routes reject unauthenticated requests.
 - Postgres flexible server has `pgvector` installed and `npm run db:migrate` has completed.
 - `/v1/health` reports `index.backend=postgres-pgvector`.
+- Public `/v1/health` does not expose connector configuration, global document/chunk/job counts, or per-source corpus counts; use protected `/v1/index/status?tenantId=&userId=` for scoped index counts.
 - Service Bus queue `unified-search-sync` exists and the worker Container App is running.
 - Scheduled sync is configured either through a single-replica scheduler Container App/job using `UNIFIED_SEARCH_SYNC_SCHEDULES`, or consciously disabled for manual-only testing with `UNIFIED_SEARCH_SCHEDULER_REQUIRED` unset/false. Prefer the API-backed scheduler (`node src/apiScheduler.js`) so scheduling only needs the protected API URL plus auth token; use the direct scheduler (`node src/scheduler.js`) only when intentionally giving the scheduler Postgres and Service Bus secrets.
 - `/v1/health` reports `queue.backend=azure-service-bus`.

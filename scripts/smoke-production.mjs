@@ -36,6 +36,7 @@ assert(health.data.index?.backend === 'postgres-pgvector', `expected postgres-pg
 assert(health.data.queue?.backend === 'azure-service-bus', `expected azure-service-bus, got ${health.data.queue?.backend}`);
 assert(health.data.artifacts?.backend === 'azure-blob-artifact', `expected azure-blob-artifact, got ${health.data.artifacts?.backend}`);
 assert(health.data.auth?.required === true, 'auth must be required');
+assertPublicHealthIsNonEnumerating(health.data);
 console.log('health ok', summarizeHealth(health.data));
 
 const unauth = await request('/v1/connectors', { auth: false });
@@ -364,6 +365,18 @@ function summarizeHealth(data) {
     queue: data.queue?.backend,
     artifacts: data.artifacts?.backend,
   };
+}
+
+function assertPublicHealthIsNonEnumerating(data) {
+  assert(data.connectors === undefined, 'public health must not expose connector configuration');
+  assert(data.documents === undefined, 'public health must not expose global document count');
+  assert(data.chunks === undefined, 'public health must not expose global chunk count');
+  assert(data.jobs === undefined, 'public health must not expose global job count');
+  const indexKeys = Object.keys(data.index || {}).sort();
+  assert(JSON.stringify(indexKeys) === JSON.stringify(['backend', 'ready']), `public health index must only expose backend/ready, got ${indexKeys.join(',')}`);
+  for (const key of ['documents', 'chunks', 'jobs', 'bySource', 'connectors']) {
+    assert(data.index?.[key] === undefined, `public health index must not expose ${key}`);
+  }
 }
 
 function requireEnv(name) {

@@ -87,6 +87,7 @@ async function checkAuthBoundary() {
   assert(health.index?.backend === 'postgres-pgvector', `expected postgres-pgvector, got ${health.index?.backend}`);
   assert(health.queue?.backend === 'azure-service-bus', `expected azure-service-bus, got ${health.queue?.backend}`);
   assert(health.artifacts?.backend === 'azure-blob-artifact', `expected azure blob artifacts, got ${health.artifacts?.backend}`);
+  assertPublicHealthIsNonEnumerating(health);
   report.checks.push({
     name: 'api_auth_and_infrastructure',
     status: 'ok',
@@ -253,4 +254,16 @@ function truthy(value) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function assertPublicHealthIsNonEnumerating(data) {
+  assert(data.connectors === undefined, 'public health must not expose connector configuration');
+  assert(data.documents === undefined, 'public health must not expose global document count');
+  assert(data.chunks === undefined, 'public health must not expose global chunk count');
+  assert(data.jobs === undefined, 'public health must not expose global job count');
+  const indexKeys = Object.keys(data.index || {}).sort();
+  assert(JSON.stringify(indexKeys) === JSON.stringify(['backend', 'ready']), `public health index must only expose backend/ready, got ${indexKeys.join(',')}`);
+  for (const key of ['documents', 'chunks', 'jobs', 'bySource', 'connectors']) {
+    assert(data.index?.[key] === undefined, `public health index must not expose ${key}`);
+  }
 }

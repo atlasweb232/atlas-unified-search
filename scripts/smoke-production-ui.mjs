@@ -27,6 +27,11 @@ const unauth = await request('/v1/connectors');
 assert(unauth.status === 401, `expected unauthenticated API route to return 401, got ${unauth.status}`);
 console.log('api auth boundary ok');
 
+const health = await request('/v1/health');
+assert(health.ok, `health failed: ${health.status} ${JSON.stringify(health.data)}`);
+assertPublicHealthIsNonEnumerating(health.data);
+console.log('public health boundary ok');
+
 if (token) {
   const readiness = await request('/v1/connectors/readiness', { token });
   assert(readiness.ok, `readiness failed: ${readiness.status} ${JSON.stringify(readiness.data)}`);
@@ -80,4 +85,16 @@ function requireEnv(name) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function assertPublicHealthIsNonEnumerating(data) {
+  assert(data.connectors === undefined, 'public health must not expose connector configuration');
+  assert(data.documents === undefined, 'public health must not expose global document count');
+  assert(data.chunks === undefined, 'public health must not expose global chunk count');
+  assert(data.jobs === undefined, 'public health must not expose global job count');
+  const indexKeys = Object.keys(data.index || {}).sort();
+  assert(JSON.stringify(indexKeys) === JSON.stringify(['backend', 'ready']), `public health index must only expose backend/ready, got ${indexKeys.join(',')}`);
+  for (const key of ['documents', 'chunks', 'jobs', 'bySource', 'connectors']) {
+    assert(data.index?.[key] === undefined, `public health index must not expose ${key}`);
+  }
 }
