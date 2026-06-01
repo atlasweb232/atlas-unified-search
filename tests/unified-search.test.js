@@ -940,6 +940,62 @@ test('data fabric connector syncs live HTTP records', async () => {
   }
 });
 
+test('built-in data fabric endpoint is authenticated and tenant-scoped', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-built-in-fabric-'));
+  let server;
+  try {
+    const appConfig = {
+      ...config(dir),
+      auth: { required: true, token: 'fabric-token' },
+      dataFabric: {
+        baseUrl: '',
+        apiToken: 'fabric-token',
+        readinessPath: '/v1/data-fabric/health',
+        recordsPath: '/v1/data-fabric/records',
+      },
+    };
+    const app = await createApp(appConfig);
+    server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    appConfig.dataFabric.baseUrl = base;
+
+    const unauthorized = await fetch(`${base}/v1/data-fabric/health`);
+    assert.equal(unauthorized.status, 401);
+
+    await fetch(`${base}/v1/search`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer fabric-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'atlasweb', userId: 'rakib', query: 'no data yet', sources: ['knowledge_base'] }),
+    });
+
+    const readiness = await fetch(`${base}/v1/connectors/readiness?source=data_fabric`, {
+      headers: { Authorization: 'Bearer fabric-token' },
+    }).then((response) => response.json());
+    assert.equal(readiness.success, true);
+    assert.equal(readiness.checks[0].ready, true);
+
+    const sync = await fetch(`${base}/v1/sync/data_fabric`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer fabric-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'atlasweb', userId: 'rakib', wait: true, options: { dataset: 'operational_summary' } }),
+    }).then((response) => response.json());
+    assert.equal(sync.success, true);
+    assert.ok(sync.indexed >= 1);
+
+    const search = await fetch(`${base}/v1/search`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer fabric-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'atlasweb', userId: 'rakib', query: 'unified search index status', sources: ['data_fabric'] }),
+    }).then((response) => response.json());
+    assert.equal(search.success, true);
+    assert.equal(search.results[0].source, 'data_fabric');
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
 test('email connector readiness exposes smoke user and federated search completes', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-email-'));
   let emailServer;

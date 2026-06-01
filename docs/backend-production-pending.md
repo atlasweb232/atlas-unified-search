@@ -24,6 +24,8 @@ already have backend credentials/storage configured.
 - Federated email search through the existing Atlas email vector search service
 - Conference bridge Blob indexing
 - Knowledge base indexing from packaged `/app/docs`
+- Backend-owned authenticated Data Fabric records endpoint for tenant/user
+  operational summaries and audit-derived records
 - Authenticated `/v1/events/{source}` path plus verified Slack Events API,
   Google Drive Changes, and Azure Blob Event Grid webhook ingress that maps
   provider notifications to readiness-gated, tenant/user-scoped sync jobs
@@ -40,8 +42,8 @@ coverage:
 - Slack live access requires `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_IDS`.
 - Google Drive live access requires either OAuth refresh-token credentials or
   `GOOGLE_SERVICE_ACCOUNT_JSON`.
-- Data Fabric live access requires `DATA_FABRIC_BASE_URL` and a service that
-  implements the documented readiness/records contract.
+- Data Fabric can use the backend-owned `/v1/data-fabric/*` contract, or a
+  separate external service if/when one is introduced.
 
 Run this before wiring live Slack or Drive credentials:
 

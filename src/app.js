@@ -227,6 +227,41 @@ export async function createApp(config) {
     }
   });
 
+  app.get('/v1/data-fabric/health', async (_req, res) => {
+    try {
+      await refreshStore(store);
+      res.json({
+        success: true,
+        ready: true,
+        service: 'atlas-unified-search-data-fabric',
+        version: '1',
+        datasets: ['index_status', 'audit_events', 'operational_summary'],
+      });
+    } catch (error) {
+      res.status(503).json({ success: false, ready: false, error: error.message });
+    }
+  });
+
+  app.get('/v1/data-fabric/records', async (req, res) => {
+    const { tenantId, userId, dataset = 'operational_summary', limit = '50' } = req.query || {};
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    }
+    try {
+      await refreshStore(store);
+      const records = dataFabricRecords({
+        store,
+        tenantId,
+        userId,
+        dataset,
+        limit: Math.min(Math.max(Number(limit) || 50, 1), 200),
+      });
+      return res.json({ success: true, records });
+    } catch (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   app.get('/v1/index/status', async (req, res) => {
     const { tenantId, userId } = req.query || {};
     if (!tenantId || !userId) {
@@ -639,6 +674,58 @@ function eventTriggerSummary(source, event = {}) {
     dataset: event.dataset || '',
     prefix: event.prefix || event.blobPrefix || '',
   };
+}
+
+function dataFabricRecords({ store, tenantId, userId, dataset, limit }) {
+  const index = store.scopedStatus({ tenantId, userId });
+  const audit = store.listAudit({ tenantId, userId, limit });
+  const now = new Date().toISOString();
+  const normalizedDataset = String(dataset || 'operational_summary');
+  const records = [];
+
+  if (['index_status', 'operational_summary', 'all'].includes(normalizedDataset)) {
+    records.push({
+      id: `index_status:${tenantId}:${userId}`,
+      dataset: 'index_status',
+      title: 'Unified search index status',
+      summary: `${index.documents} documents and ${index.chunks} chunks indexed for ${tenantId}/${userId}.`,
+      text: `Unified search index has ${index.documents} documents and ${index.chunks} chunks. Source counts: ${JSON.stringify(index.bySource || {})}.`,
+      timestamp: now,
+      record: {
+        tenantId,
+        userId,
+        backend: index.backend,
+        documents: index.documents,
+        chunks: index.chunks,
+        bySource: index.bySource || {},
+      },
+      metadata: { source: 'unified_search', kind: 'index_status' },
+    });
+  }
+
+  if (['audit_events', 'operational_summary', 'all'].includes(normalizedDataset)) {
+    for (const event of audit.slice(0, Math.max(limit - records.length, 0))) {
+      records.push({
+        id: `audit:${event.id}`,
+        dataset: 'audit_events',
+        title: `Audit event: ${event.eventType}`,
+        summary: `Audit ${event.eventType} at ${event.createdAt}.`,
+        text: `Audit event ${event.eventType} for ${tenantId}/${userId}. Metadata: ${JSON.stringify(event.metadata || {})}.`,
+        timestamp: event.createdAt || now,
+        record: {
+          id: event.id,
+          tenantId,
+          userId,
+          eventType: event.eventType,
+          createdAt: event.createdAt,
+          metadata: event.metadata || {},
+        },
+        metadata: { source: 'unified_search', kind: 'audit_event' },
+      });
+    }
+  }
+
+  return records.slice(0, limit);
 }
 
 function hashQuery(query) {
