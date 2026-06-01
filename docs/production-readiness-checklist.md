@@ -38,6 +38,7 @@ The unified search service is production-testable when these gates are true:
 - Optional `UNIFIED_SEARCH_SOURCE_PERMISSIONS` can restrict usable sources per `tenantId:userId`.
 - `npm run smoke:production` passes with `UNIFIED_SEARCH_SMOKE_MODE=inline`.
 - `npm run smoke:production` passes with `UNIFIED_SEARCH_SMOKE_MODE=async`, proving Service Bus worker ownership.
+- After Slack and Google Drive credentials are wired, `UNIFIED_SEARCH_SMOKE_REQUIRE_LIVE_SOURCES=slack,google_drive npm run smoke:production` passes; this fails closed if either source is not live-ready and proves real reindex/search with configured connector coverage before cleaning the smoke corpus.
 - The Slack portion of `smoke:production` is a fixture pipeline check unless `/v1/connectors/readiness?source=slack` returns `ready:true`; it does not prove real Slack Web API access without `SLACK_BOT_TOKEN` and channel IDs.
 - Google Drive live ingestion is not proven until `/v1/connectors/readiness?source=google_drive` returns `ready:true` and `/v1/reindex/google_drive` succeeds with real credentials.
 - `npm run smoke:production:ui` passes against the hosted frontend and protected API boundary.

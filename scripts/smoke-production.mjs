@@ -10,6 +10,7 @@ const liveLimit = Number(process.env.UNIFIED_SEARCH_SMOKE_LIVE_LIMIT || 5);
 const configuredEmailSmokeUserId = process.env.UNIFIED_SEARCH_SMOKE_EMAIL_USER_ID || process.env.EMAIL_READINESS_USER_EMAIL || '';
 const emailSmokeQuery = process.env.UNIFIED_SEARCH_SMOKE_EMAIL_QUERY || 'readiness';
 const requireEmailResults = truthy(process.env.UNIFIED_SEARCH_SMOKE_REQUIRE_EMAIL_RESULTS || '');
+const requiredLiveSources = listEnv('UNIFIED_SEARCH_SMOKE_REQUIRE_LIVE_SOURCES');
 
 async function request(path, options = {}) {
   const response = await fetch(`${base}${path}`, {
@@ -51,6 +52,13 @@ console.log('connector readiness', readiness.data.checks.map((check) => ({
   status: check.status,
 })));
 const readinessBySource = Object.fromEntries((readiness.data.checks || []).map((check) => [check.source, check]));
+for (const source of requiredLiveSources) {
+  const check = readinessBySource[source];
+  assert(check?.ready === true, `required live source is not ready: ${source} ${JSON.stringify({
+    status: check?.status || 'not_reported',
+    missing: check?.requirements?.filter((requirement) => !requirement.configured && !requirement.optional).map((requirement) => requirement.name) || [],
+  })}`);
+}
 console.log('live connector coverage', {
   email: readinessBySource.email?.ready ? 'live_ready' : readinessBySource.email?.status || 'not_reported',
   conference_bridge: readinessBySource.conference_bridge?.ready ? 'live_ready' : readinessBySource.conference_bridge?.status || 'not_reported',
@@ -274,6 +282,17 @@ if (readinessBySource.knowledge_base?.ready) {
   console.log('knowledge base live source skipped', { status: readinessBySource.knowledge_base?.status || 'not_reported' });
 }
 
+const fixtureCleanup = await request('/v1/documents', {
+  method: 'DELETE',
+  body: JSON.stringify({
+    tenantId,
+    userId,
+    source: 'slack',
+    resetCheckpoints: true,
+  }),
+});
+console.log('slack fixture pipeline cleanup', { status: fixtureCleanup.status, deleted: fixtureCleanup.data?.deleted || 0 });
+
 async function waitForJob(jobId) {
   for (let attempt = 1; attempt <= jobPollAttempts; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, jobPollIntervalMs));
@@ -288,45 +307,58 @@ async function waitForJob(jobId) {
 async function liveConnectorSmoke({ source, query, options = {} }) {
   const liveTenantId = `${tenantId}_${source}_live`;
   const liveUserId = `${userId}_${source}_live`;
-  const reindex = await request(`/v1/reindex/${source}`, {
-    method: 'POST',
-    body: JSON.stringify({
-      tenantId: liveTenantId,
-      userId: liveUserId,
-      wait: true,
-      options,
-    }),
-  });
-  assert(reindex.ok, `${source} live reindex failed: ${JSON.stringify(reindex.data)}`);
-  assert(reindex.data.indexed >= 1, `${source} live reindex returned no documents; configure a smoke channel/folder/dataset with at least one readable item`);
+  let indexed = 0;
+  let count = 0;
+  try {
+    const reindex = await request(`/v1/reindex/${source}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        tenantId: liveTenantId,
+        userId: liveUserId,
+        wait: true,
+        options,
+      }),
+    });
+    assert(reindex.ok, `${source} live reindex failed: ${JSON.stringify(reindex.data)}`);
+    indexed = reindex.data.indexed || 0;
+    assert(indexed >= 1, `${source} live reindex returned no documents; configure a smoke channel/folder/dataset with at least one readable item`);
 
-  const search = await request('/v1/search', {
-    method: 'POST',
-    body: JSON.stringify({
-      tenantId: liveTenantId,
-      userId: liveUserId,
+    const search = await request('/v1/search-runs', {
+      method: 'POST',
+      body: JSON.stringify({
+        tenantId: liveTenantId,
+        userId: liveUserId,
+        query,
+        sources: [source],
+        wait: true,
+        limit: liveLimit,
+      }),
+    });
+    assert(search.ok && search.data.results?.length, `${source} live search failed: ${JSON.stringify(search.data)}`);
+    count = search.data.results.length;
+    const status = search.data.searchRun?.sourceStatuses?.find((item) => item.source === source);
+    assert(status?.status === 'completed', `${source} source-agent did not complete: ${JSON.stringify(status)}`);
+    assert(status.connectorConfigured === true, `${source} search did not prove configured connector coverage: ${JSON.stringify(status)}`);
+    assert(status.searchMode !== 'local_index_only', `${source} search fell back to unconfigured indexed-only mode: ${JSON.stringify(status)}`);
+
+    console.log(`${source} live source ok`, {
+      indexed,
+      count,
       query,
-      sources: [source],
-      limit: liveLimit,
-    }),
-  });
-  assert(search.ok && search.data.results?.length, `${source} live search failed: ${JSON.stringify(search.data)}`);
-
-  await request('/v1/documents', {
-    method: 'DELETE',
-    body: JSON.stringify({
-      tenantId: liveTenantId,
-      userId: liveUserId,
-      source,
-      resetCheckpoints: true,
-    }),
-  });
-
-  console.log(`${source} live source ok`, {
-    indexed: reindex.data.indexed,
-    count: search.data.results.length,
-    query,
-  });
+      searchMode: status.searchMode,
+    });
+  } finally {
+    const cleanup = await request('/v1/documents', {
+      method: 'DELETE',
+      body: JSON.stringify({
+        tenantId: liveTenantId,
+        userId: liveUserId,
+        source,
+        resetCheckpoints: true,
+      }),
+    });
+    console.log(`${source} live source cleanup`, { status: cleanup.status, deleted: cleanup.data?.deleted || 0, indexedBeforeCleanup: indexed, resultCount: count });
+  }
 }
 
 async function assertUnreadyConnectorReindexBlocked(source, readinessCheck) {
