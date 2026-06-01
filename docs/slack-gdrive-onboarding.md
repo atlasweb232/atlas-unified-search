@@ -133,10 +133,15 @@ For personal testing, use OAuth refresh token auth.
 
 1. Create a Google Cloud project.
 2. Enable Google Drive API.
-3. Create OAuth credentials.
-   For personal testing, an "OAuth client ID" for a desktop app is the simplest
-   path because the helper can generate a local authorization URL and exchange
-   the returned code for a refresh token.
+3. Create OAuth credentials. For personal testing, create an OAuth client that
+   allows this loopback redirect URI:
+
+```text
+http://127.0.0.1:53682/oauth2callback
+```
+
+   Override it with `GOOGLE_REDIRECT_URI` if you choose a different local port
+   or callback path.
 4. Authorize scopes:
    - `https://www.googleapis.com/auth/drive.readonly`
 5. Store these backend-side:
@@ -157,10 +162,19 @@ npm run gdrive:create-refresh-token
 ```
 
 Open the returned `authorizationUrl`, approve Drive read access, then exchange
-the code:
+the `code` query parameter from the redirect URL:
 
 ```bash
 export GOOGLE_AUTH_CODE='<code returned by Google>'
+export GOOGLE_OAUTH_PRINT_SECRET=true
+npm run gdrive:create-refresh-token
+```
+
+If the browser is on the same machine running the helper, it can capture the
+callback automatically:
+
+```bash
+export GOOGLE_OAUTH_WAIT_FOR_CALLBACK=true
 export GOOGLE_OAUTH_PRINT_SECRET=true
 npm run gdrive:create-refresh-token
 ```
