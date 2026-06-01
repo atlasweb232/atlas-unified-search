@@ -47,6 +47,19 @@ export UNIFIED_SEARCH_AUTH_TOKEN='<same token wired into the API app>'
 npm run wire:production-connectors
 ```
 
+For production testing, prefer strict preflight wiring:
+
+```bash
+export WIRE_CONNECTORS_VALIDATE_FIRST=true
+npm run wire:production-connectors
+```
+
+Strict preflight validates the connector from the local environment before
+touching Azure Container Apps. It fails closed if Slack channel access, Google
+Drive auth, or Data Fabric readiness cannot be proven. The failure report
+includes missing env names and provider error messages, but does not print
+secret values.
+
 9. Start a live sync:
 
 ```bash
@@ -104,6 +117,18 @@ export UNIFIED_SEARCH_BASE_URL='https://atlas-unified-search.proudfield-a201b3fd
 export UNIFIED_SEARCH_AUTH_TOKEN='<same token wired into the API app>'
 npm run wire:production-connectors
 ```
+
+For production testing, prefer strict preflight wiring:
+
+```bash
+export WIRE_CONNECTORS_VALIDATE_FIRST=true
+npm run wire:production-connectors
+```
+
+Strict preflight validates Google Drive auth and file-list access before Azure
+Container Apps are updated. If OAuth returns `invalid_client`,
+`invalid_grant`, or folder access is missing, the script exits before wiring the
+bad secret refs into production.
 
 8. Start a live sync:
 
