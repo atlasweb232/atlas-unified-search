@@ -6,6 +6,8 @@ export class PostgresSearchStore extends JsonSearchStore {
     super({ dataDir: '/tmp/atlas-unified-search-postgres-cache' });
     this.name = 'postgres-pgvector';
     this.pool = new pg.Pool({ connectionString, ssl });
+    this.pendingDeletedDocumentIds = new Set();
+    this.pendingDeletedCheckpointKeys = new Set();
   }
 
   async load() {
@@ -21,6 +23,14 @@ export class PostgresSearchStore extends JsonSearchStore {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      if (this.pendingDeletedDocumentIds.size) {
+        const ids = [...this.pendingDeletedDocumentIds];
+        await client.query('DELETE FROM unified_chunks WHERE document_id = ANY($1::text[])', [ids]);
+        await client.query('DELETE FROM unified_documents WHERE id = ANY($1::text[])', [ids]);
+      }
+      if (this.pendingDeletedCheckpointKeys.size) {
+        await client.query('DELETE FROM unified_checkpoints WHERE key = ANY($1::text[])', [[...this.pendingDeletedCheckpointKeys]]);
+      }
       for (const document of Object.values(this.state.documents)) {
         await upsertDocument(client, document);
       }
@@ -56,6 +66,8 @@ export class PostgresSearchStore extends JsonSearchStore {
         );
       }
       await client.query('COMMIT');
+      this.pendingDeletedDocumentIds.clear();
+      this.pendingDeletedCheckpointKeys.clear();
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -66,6 +78,22 @@ export class PostgresSearchStore extends JsonSearchStore {
 
   async close() {
     await this.pool.end();
+  }
+
+  deleteDocuments(args) {
+    const deleted = super.deleteDocuments(args);
+    for (const id of deleted.documentIds) this.pendingDeletedDocumentIds.add(id);
+    return deleted;
+  }
+
+  deleteCheckpoints({ tenantId, userId, source = '' }) {
+    const prefix = source ? `${source}:${tenantId}:${userId}:` : '';
+    const keys = Object.keys(this.state.checkpoints).filter((key) => (
+      prefix ? key.startsWith(prefix) : key.includes(`:${tenantId}:${userId}:`)
+    ));
+    const deleted = super.deleteCheckpoints({ tenantId, userId, source });
+    for (const key of keys) this.pendingDeletedCheckpointKeys.add(key);
+    return deleted;
   }
 
   status() {

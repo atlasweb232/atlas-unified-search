@@ -9,6 +9,7 @@ import { createApp } from '../src/app.js';
 import { isRetryableSyncError, JobRunner } from '../src/jobRunner.js';
 import { SearchRunCoordinator } from '../src/searchRun.js';
 import { JsonSearchStore } from '../src/store.js';
+import { PostgresSearchStore } from '../src/stores/postgresStore.js';
 
 function config(dataDir) {
   return {
@@ -119,6 +120,51 @@ test('configured CORS allowlist only exposes allowed origins', async () => {
     if (server) await new Promise((resolve) => server.close(resolve));
     await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
+});
+
+test('postgres store persists document and checkpoint deletes', async () => {
+  const store = new PostgresSearchStore({ connectionString: 'postgres://example.invalid/test', ssl: false });
+  const queries = [];
+  store.pool = {
+    async connect() {
+      return {
+        async query(sql, params = []) {
+          queries.push({ sql, params });
+        },
+        release() {},
+      };
+    },
+  };
+  store.state.documents.doc_1 = {
+    id: 'doc_1',
+    tenantId: 'atlasweb',
+    userId: 'rakib',
+    source: 'data_fabric',
+    sourceId: 'one',
+    title: 'Delete me',
+    body: 'Delete me',
+  };
+  store.state.chunks.chunk_1 = {
+    id: 'chunk_1',
+    documentId: 'doc_1',
+    tenantId: 'atlasweb',
+    userId: 'rakib',
+    source: 'data_fabric',
+    text: 'Delete me',
+  };
+  store.state.checkpoints['data_fabric:atlasweb:rakib:sync'] = { updatedAt: new Date().toISOString() };
+
+  const deleted = store.deleteDocuments({ tenantId: 'atlasweb', userId: 'rakib', source: 'data_fabric' });
+  const checkpoints = store.deleteCheckpoints({ tenantId: 'atlasweb', userId: 'rakib', source: 'data_fabric' });
+  await store.save();
+
+  assert.equal(deleted.deleted, 1);
+  assert.equal(checkpoints.deleted, 1);
+  assert.ok(queries.some((query) => query.sql.includes('DELETE FROM unified_chunks') && query.params[0].includes('doc_1')));
+  assert.ok(queries.some((query) => query.sql.includes('DELETE FROM unified_documents') && query.params[0].includes('doc_1')));
+  assert.ok(queries.some((query) => query.sql.includes('DELETE FROM unified_checkpoints') && query.params[0].includes('data_fabric:atlasweb:rakib:sync')));
+  assert.equal(store.pendingDeletedDocumentIds.size, 0);
+  assert.equal(store.pendingDeletedCheckpointKeys.size, 0);
 });
 
 test('search run source-agent timeout returns partial results', async () => {
