@@ -265,6 +265,12 @@ test('unified search indexes fixture documents across all connector types', asyn
     });
     assert.equal(reindex.success, true);
     assert.equal(reindex.indexed, 1);
+
+    const jobs = await request(base, `/v1/jobs?tenantId=${tenantId}&userId=${userId}`);
+    assert.equal(jobs.success, true);
+    assert.ok(jobs.jobs.every((job) => job.tenantId === tenantId && job.userId === userId));
+    const missingJobScope = await fetch(`${base}/v1/jobs`);
+    assert.equal(missingJobScope.status, 400);
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     await new Promise((resolve) => setTimeout(resolve, 25));

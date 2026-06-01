@@ -62,7 +62,7 @@ export class JobRunner {
     }
   }
 
-  listJobs() {
-    return this.store.listJobs();
+  listJobs(scope = {}) {
+    return this.store.listJobs(scope);
   }
 }

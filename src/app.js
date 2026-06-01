@@ -220,8 +220,12 @@ export async function createApp(config) {
   });
 
   app.get('/v1/jobs', async (req, res) => {
+    const { tenantId, userId } = req.query || {};
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    }
     await refreshStore(store);
-    res.json({ success: true, jobs: jobs.listJobs() });
+    res.json({ success: true, jobs: jobs.listJobs({ tenantId, userId }) });
   });
 
   app.get('/v1/audit', async (req, res) => {

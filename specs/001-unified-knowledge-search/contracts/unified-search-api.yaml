@@ -135,6 +135,23 @@ paths:
       responses:
         "200":
           description: Tenant/user-scoped redacted audit event list
+  /v1/jobs:
+    get:
+      summary: List sync jobs scoped to tenant and user
+      parameters:
+        - name: tenantId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tenant/user-scoped sync job list
   /v1/assistant/actions:
     post:
       summary: Run an assistant action over retrieved search results

@@ -127,8 +127,11 @@ export class JsonSearchStore {
     return this.state.jobs[id];
   }
 
-  listJobs() {
-    return Object.values(this.state.jobs).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  listJobs({ tenantId = '', userId = '' } = {}) {
+    return Object.values(this.state.jobs)
+      .filter((job) => (!tenantId || job.tenantId === tenantId))
+      .filter((job) => (!userId || job.userId === userId))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
   audit(event) {

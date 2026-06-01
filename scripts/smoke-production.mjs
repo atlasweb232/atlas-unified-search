@@ -276,7 +276,7 @@ if (readinessBySource.knowledge_base?.ready) {
 async function waitForJob(jobId) {
   for (let attempt = 1; attempt <= jobPollAttempts; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, jobPollIntervalMs));
-    const jobs = await request('/v1/jobs');
+    const jobs = await request(`/v1/jobs?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(userId)}`);
     const job = jobs.data.jobs?.find((item) => item.id === jobId);
     console.log('job poll', { attempt, status: job?.status, indexed: job?.indexed, startedAt: job?.startedAt || '', error: job?.error || '' });
     if (job?.status === 'completed' || job?.status === 'failed') return job;
