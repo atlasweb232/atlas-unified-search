@@ -33,8 +33,10 @@ The unified search service is production-testable when these gates are true:
 - The Slack portion of `smoke:production` is a fixture pipeline check unless `/v1/connectors/readiness?source=slack` returns `ready:true`; it does not prove real Slack Web API access without `SLACK_BOT_TOKEN` and channel IDs.
 - Google Drive live ingestion is not proven until `/v1/connectors/readiness?source=google_drive` returns `ready:true` and `/v1/reindex/google_drive` succeeds with real credentials.
 - `npm run smoke:production:ui` passes against the hosted frontend and protected API boundary.
+- `npm run smoke:browser-ui` passes against the hosted frontend with `UNIFIED_SEARCH_LOCAL_FRONTEND_URL` set, proving the rendered React shell disables unauthenticated Slack/GDrive source selection and can run a scoped federated email search.
 - `GET /v1/connectors/readiness` returns explicit `ready/status/requirements` for each connector without exposing secret values.
 - `GET /v1/production-readiness` returns `readyForProductionTesting:true`, lists Slack/GDrive under `credentialBlockedSources` until real credentials are configured, and only sets `productionComplete:true` after every live source is proven.
+- `STATUS_REQUIRE_READY_SOURCES=slack,google_drive npm run status:production` or `npm run status:live-connectors` fails until both Slack and Google Drive readiness are true; use this as the explicit live-connector acceptance gate after credentials are wired.
 - `npm run audit:production-config` reports API/worker env wiring and credential blockers without printing secret values.
 - `WIRE_CONNECTORS_DRY_RUN=true WIRE_CONNECTORS_VALIDATE_FIRST=true npm run wire:production-connectors` prints redacted planned Azure changes and does not update Container Apps.
 - `WIRE_CONNECTORS_VALIDATE_FIRST=true npm run wire:production-connectors` validates supplied Slack, Google Drive, and Data Fabric credentials before updating either Container App; Slack must pass channel history reads, Google Drive must pass file listing, and failed preflight must leave Azure env wiring unchanged.

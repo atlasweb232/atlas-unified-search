@@ -9,6 +9,7 @@ const serviceBusQueue = process.env.SERVICE_BUS_SYNC_QUEUE_NAME || 'unified-sear
 const authToken = process.env.UNIFIED_SEARCH_AUTH_TOKEN || '';
 const allowNotTestable = truthy(process.env.STATUS_ALLOW_NOT_TESTABLE);
 const requireComplete = truthy(process.env.STATUS_REQUIRE_COMPLETE);
+const requireReadySources = list(process.env.STATUS_REQUIRE_READY_SOURCES);
 
 const apiApp = loadContainerApp(apiAppName);
 const workerApp = loadContainerApp(workerAppName);
@@ -166,6 +167,16 @@ function summarizeReadiness(status) {
     && status.publicHealth.artifactBackend === 'azure-blob-artifact'
     && status.publicHealth.nonEnumerating;
   const runtime = status.protectedRuntime.productionReadiness || {};
+  const connectors = status.protectedRuntime.connectors || [];
+  const requiredSources = requireReadySources.map((source) => {
+    const connector = connectors.find((item) => item.source === source);
+    return {
+      source,
+      ready: Boolean(connector?.ready),
+      status: connector?.status || 'not_reported',
+      missing: connector?.missing || [],
+    };
+  });
   return {
     productionTestable: Boolean(appsReady && queueClean && healthReady && runtime.readyForProductionTesting),
     productionComplete: Boolean(runtime.productionComplete),
@@ -174,6 +185,8 @@ function summarizeReadiness(status) {
     healthReady,
     credentialBlocked: runtime.credentialBlockedSources || [],
     futureSources: runtime.futureSources || [],
+    requiredSources,
+    requiredSourcesReady: requiredSources.every((item) => item.ready),
   };
 }
 
@@ -187,9 +200,21 @@ function enforceStatus(summary) {
   if (requireComplete && !summary.productionComplete) {
     console.error('Production status failed: deployment is production-testable but not production-complete.');
     process.exitCode = 1;
+    return;
+  }
+  if (requireReadySources.length && !summary.requiredSourcesReady) {
+    console.error(`Production status failed: required live sources are not ready: ${summary.requiredSources.filter((item) => !item.ready).map((item) => item.source).join(', ')}`);
+    process.exitCode = 1;
   }
 }
 
 function truthy(value) {
   return ['1', 'true', 'yes'].includes(String(value || '').toLowerCase());
+}
+
+function list(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
