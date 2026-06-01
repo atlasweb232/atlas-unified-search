@@ -10,6 +10,7 @@ const authToken = process.env.UNIFIED_SEARCH_AUTH_TOKEN || '';
 const allowNotTestable = truthy(process.env.STATUS_ALLOW_NOT_TESTABLE);
 const requireComplete = truthy(process.env.STATUS_REQUIRE_COMPLETE);
 const requireReadySources = list(process.env.STATUS_REQUIRE_READY_SOURCES);
+const requireWebhookIngress = list(process.env.STATUS_REQUIRE_WEBHOOK_INGRESS);
 
 const apiApp = loadContainerApp(apiAppName);
 const workerApp = loadContainerApp(workerAppName);
@@ -118,6 +119,7 @@ async function protectedStatus(url, token) {
       productionComplete: Boolean(report.productionComplete),
       credentialBlockedSources: (report.credentialBlockedSources || []).map((item) => item.source),
       futureSources: report.futureSources || [],
+      webhookIngress: report.webhookIngress || [],
     },
     scopedIndexStatus: indexStatus.ok ? indexStatus.body?.index : { unavailable: true, status: indexStatus.status },
   };
@@ -168,6 +170,7 @@ function summarizeReadiness(status) {
     && status.publicHealth.nonEnumerating;
   const runtime = status.protectedRuntime.productionReadiness || {};
   const connectors = status.protectedRuntime.connectors || [];
+  const webhookIngress = runtime.webhookIngress || [];
   const requiredSources = requireReadySources.map((source) => {
     const connector = connectors.find((item) => item.source === source);
     return {
@@ -185,8 +188,19 @@ function summarizeReadiness(status) {
     healthReady,
     credentialBlocked: runtime.credentialBlockedSources || [],
     futureSources: runtime.futureSources || [],
+    webhookIngress,
+    webhookIngressReady: webhookIngress.every((item) => item.ready),
     requiredSources,
     requiredSourcesReady: requiredSources.every((item) => item.ready),
+    requiredWebhookIngress: requireWebhookIngress.map((name) => {
+      const ingress = webhookIngress.find((item) => item.name === name);
+      return {
+        name,
+        ready: Boolean(ingress?.ready),
+        status: ingress?.status || 'not_reported',
+        missing: ingress?.missing || [],
+      };
+    }),
   };
 }
 
@@ -204,6 +218,11 @@ function enforceStatus(summary) {
   }
   if (requireReadySources.length && !summary.requiredSourcesReady) {
     console.error(`Production status failed: required live sources are not ready: ${summary.requiredSources.filter((item) => !item.ready).map((item) => item.source).join(', ')}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (requireWebhookIngress.length && !summary.requiredWebhookIngress.every((item) => item.ready)) {
+    console.error(`Production status failed: required webhook ingress is not ready: ${summary.requiredWebhookIngress.filter((item) => !item.ready).map((item) => item.name).join(', ')}`);
     process.exitCode = 1;
   }
 }

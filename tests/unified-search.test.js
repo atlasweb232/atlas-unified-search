@@ -67,6 +67,9 @@ test('api auth boundary blocks protected endpoints when enabled', async () => {
     assert.equal(readinessBody.success, true);
     assert.equal(readinessBody.report.readyForProductionTesting, false);
     assert.ok(readinessBody.report.credentialBlockedSources.some((item) => item.source === 'slack'));
+    assert.ok(readinessBody.report.webhookIngress.some((item) => item.name === 'slack_events' && item.missing.includes('SLACK_SIGNING_SECRET')));
+    assert.ok(readinessBody.report.webhookIngress.some((item) => item.name === 'google_drive_changes' && item.missing.includes('GDRIVE_WEBHOOK_TOKEN')));
+    assert.ok(readinessBody.report.webhookIngress.some((item) => item.name === 'azure_blob_event_grid' && item.missing.includes('CONFERENCE_EVENT_GRID_TOKEN')));
 
     const setup = await fetch(`${base}/v1/connectors/setup`, {
       headers: { Authorization: 'Bearer test-token' },

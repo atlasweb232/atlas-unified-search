@@ -48,6 +48,7 @@ Then wire credentials:
 WIRE_CONNECTORS_VALIDATE_FIRST=true npm run wire:production-connectors
 npm run audit:production-config
 STATUS_REQUIRE_READY_SOURCES=slack,google_drive npm run status:production
+STATUS_REQUIRE_WEBHOOK_INGRESS=slack_events,google_drive_changes,azure_blob_event_grid npm run status:production
 UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production
 ```
 

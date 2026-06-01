@@ -228,6 +228,7 @@ async function runtimeReadiness(url, authToken) {
       })),
       liveSources: data.report.liveSources,
       futureSources: data.report.futureSources,
+      webhookIngress: data.report.webhookIngress,
     } : null,
   };
 }

@@ -685,6 +685,7 @@ function productionReadinessReport({ config, store, queue, assistant, connectorC
     .map((source) => ({ source, status: checksBySource[source].status }));
   const futureSources = ['data_fabric']
     .map((source) => ({ source, ready: Boolean(checksBySource[source]?.ready), status: checksBySource[source]?.status || 'not_reported' }));
+  const webhookIngress = webhookIngressReadiness(config);
   const fixtureOnly = [
     {
       source: 'slack',
@@ -704,18 +705,57 @@ function productionReadinessReport({ config, store, queue, assistant, connectorC
   return {
     generatedAt: new Date().toISOString(),
     readyForProductionTesting: infrastructureReady && requiredLiveSourcesReady,
-    productionComplete: infrastructureReady && requiredLiveSourcesReady && credentialBlockedSources.length === 0 && futureSources.every((item) => item.ready),
+    productionComplete: infrastructureReady
+      && requiredLiveSourcesReady
+      && credentialBlockedSources.length === 0
+      && futureSources.every((item) => item.ready)
+      && webhookIngress.every((item) => item.ready),
     infrastructure,
     liveSources,
     liveButExternal,
     credentialBlockedSources,
     futureSources,
+    webhookIngress,
     fixtureOnly,
     nextActions: [
       ...(credentialBlockedSources.some((item) => item.source === 'slack') ? ['Configure SLACK_BOT_TOKEN and SLACK_CHANNEL_IDS, then run /v1/reindex/slack with a real channel.'] : []),
       ...(credentialBlockedSources.some((item) => item.source === 'google_drive') ? ['Configure Google OAuth refresh token or service account, then run /v1/reindex/google_drive with a real folder.'] : []),
+      ...webhookIngress.filter((item) => !item.ready).map((item) => `Configure ${item.name} webhook ingress: missing ${item.missing.join(', ')}.`),
       ...(futureSources.some((item) => item.source === 'data_fabric' && !item.ready) ? ['Define and configure the Data Fabric API contract before claiming live Data Fabric readiness.'] : []),
     ],
+  };
+}
+
+function webhookIngressReadiness(config) {
+  return [
+    webhookGate('slack_events', '/v1/webhooks/slack/events', [
+      ['SLACK_SIGNING_SECRET', config.slack?.signingSecret],
+      ['SLACK_EVENT_TENANT_ID', config.slack?.eventTenantId],
+      ['SLACK_EVENT_USER_ID', config.slack?.eventUserId],
+    ]),
+    webhookGate('google_drive_changes', '/v1/webhooks/google-drive/changes', [
+      ['GDRIVE_WEBHOOK_TOKEN', config.gdrive?.webhookToken],
+      ['GDRIVE_EVENT_TENANT_ID', config.gdrive?.eventTenantId],
+      ['GDRIVE_EVENT_USER_ID', config.gdrive?.eventUserId],
+    ]),
+    webhookGate('azure_blob_event_grid', '/v1/webhooks/azure-blob/events', [
+      ['CONFERENCE_EVENT_GRID_TOKEN', config.conference?.eventGridToken],
+      ['CONFERENCE_EVENT_TENANT_ID', config.conference?.eventTenantId],
+      ['CONFERENCE_EVENT_USER_ID', config.conference?.eventUserId],
+    ]),
+  ];
+}
+
+function webhookGate(name, path, requirements) {
+  const missing = requirements
+    .filter(([, value]) => !value)
+    .map(([envName]) => envName);
+  return {
+    name,
+    path,
+    ready: missing.length === 0,
+    status: missing.length ? 'missing_configuration' : 'configured',
+    missing,
   };
 }
 

@@ -48,10 +48,14 @@ if (token) {
   assert(production.data.report?.readyForProductionTesting === true, 'production readiness report is not ready for production testing');
   assert(production.data.report?.credentialBlockedSources?.some((item) => item.source === 'slack'), 'production readiness should report Slack as credential-blocked');
   assert(production.data.report?.credentialBlockedSources?.some((item) => item.source === 'google_drive'), 'production readiness should report Google Drive as credential-blocked');
+  assert(production.data.report?.webhookIngress?.some((item) => item.name === 'slack_events'), 'production readiness should report Slack webhook ingress');
+  assert(production.data.report?.webhookIngress?.some((item) => item.name === 'google_drive_changes'), 'production readiness should report Google Drive webhook ingress');
+  assert(production.data.report?.webhookIngress?.some((item) => item.name === 'azure_blob_event_grid'), 'production readiness should report Azure Blob webhook ingress');
   console.log('production readiness report ok', {
     readyForProductionTesting: production.data.report.readyForProductionTesting,
     productionComplete: production.data.report.productionComplete,
     credentialBlocked: production.data.report.credentialBlockedSources.map((item) => item.source),
+    webhookIngress: production.data.report.webhookIngress.map((item) => ({ name: item.name, ready: item.ready })),
   });
 } else {
   console.log('authenticated readiness skipped: UNIFIED_SEARCH_AUTH_TOKEN not set');
