@@ -8,6 +8,7 @@ const workerApp = process.env.WORKER_APP_NAME || 'atlas-unified-search-worker';
 const baseUrl = process.env.UNIFIED_SEARCH_BASE_URL || '';
 const token = process.env.UNIFIED_SEARCH_AUTH_TOKEN || '';
 const validateFirst = truthy(process.env.WIRE_CONNECTORS_VALIDATE_FIRST);
+const dryRun = truthy(process.env.WIRE_CONNECTORS_DRY_RUN);
 
 const apps = [
   { role: 'api', name: apiApp },
@@ -32,6 +33,7 @@ const valueInputs = [
 ];
 
 const configured = [];
+const plannedCommands = [];
 
 if (validateFirst) {
   const validation = await validateConfiguredSources();
@@ -51,7 +53,7 @@ for (const app of apps) {
     .map(([envName, secretName]) => `${secretName}=${process.env[envName]}`);
 
   if (secrets.length) {
-    az([
+    az(app, [
       'containerapp',
       'secret',
       'set',
@@ -74,7 +76,7 @@ for (const app of apps) {
   ];
 
   if (envVars.length) {
-    az([
+    az(app, [
       'containerapp',
       'update',
       '--resource-group',
@@ -96,7 +98,9 @@ for (const app of apps) {
 
 const report = {
   resourceGroup,
+  dryRun,
   configured,
+  plannedCommands,
   nextChecks: [
     'npm run audit:production-config',
     'GET /v1/connectors/readiness with Authorization bearer token',
@@ -118,8 +122,23 @@ function truthy(value) {
   return ['1', 'true', 'yes'].includes(String(value || '').toLowerCase());
 }
 
-function az(args) {
+function az(app, args) {
+  const redactedArgs = args.map((arg) => redactCommandArg(arg));
+  plannedCommands.push({ role: app.role, app: app.name, args: redactedArgs });
+  if (dryRun) return;
   execFileSync('az', args, { stdio: ['ignore', 'ignore', 'inherit'] });
+}
+
+function redactCommandArg(arg) {
+  const text = String(arg);
+  if (text.includes('=')) {
+    const [name, ...rest] = text.split('=');
+    const value = rest.join('=');
+    if (/token|secret|key|connection|string|json/i.test(name) && !value.startsWith('secretref:')) {
+      return `${name}=[REDACTED]`;
+    }
+  }
+  return text.replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/g, '$1[REDACTED]');
 }
 
 async function validateConfiguredSources() {
