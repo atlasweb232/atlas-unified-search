@@ -27,8 +27,13 @@ export class SearchRunCoordinator {
   async execute(runId, { tenantId, userId, query, selectedSources, filters, limit }) {
     this.store.updateSearchRun(runId, { status: 'running' });
     const settled = await Promise.allSettled(selectedSources.map(async (source) => {
-      this.store.updateSourceStatus(runId, source, { status: 'running', startedAt: new Date().toISOString() });
       const connector = this.registry?.get(source);
+      const sourceContext = describeSourceSearch(connector);
+      this.store.updateSourceStatus(runId, source, {
+        status: 'running',
+        startedAt: new Date().toISOString(),
+        ...sourceContext,
+      });
       const results = await withTimeout(
         source,
         this.sourceTimeoutMs,
@@ -40,21 +45,22 @@ export class SearchRunCoordinator {
         },
       );
       const lineItems = results.map((result) => normalizeLineItem(runId, result));
-      this.store.updateSourceStatus(runId, source, { status: 'completed', completedAt: new Date().toISOString(), resultCount: lineItems.length });
-      return lineItems;
+      this.store.updateSourceStatus(runId, source, { status: 'completed', completedAt: new Date().toISOString(), resultCount: lineItems.length, ...sourceContext });
+      return { lineItems, sourceContext };
     }));
     const results = [];
     const finalSourceStatuses = [];
     for (const [index, result] of settled.entries()) {
       const source = selectedSources[index];
       if (result.status === 'fulfilled') {
-        results.push(...result.value);
+        results.push(...result.value.lineItems);
         finalSourceStatuses.push({
           source,
           status: 'completed',
           completedAt: new Date().toISOString(),
-          resultCount: result.value.length,
+          resultCount: result.value.lineItems.length,
           error: '',
+          ...result.value.sourceContext,
         });
       } else {
         const error = result.reason?.message || 'Search failed';
@@ -103,6 +109,20 @@ function normalizeLineItem(searchRunId, result) {
     links,
     expandable: Boolean((result.children || []).length || attachments.length || links.length),
     selected: false,
+  };
+}
+
+function describeSourceSearch(connector) {
+  const connectorConfigured = Boolean(connector?.isConfigured?.());
+  const vectorizationMode = connector?.vectorizationMode || 'local_index';
+  const federated = typeof connector?.search === 'function';
+  return {
+    connectorConfigured,
+    vectorizationMode,
+    searchMode: federated
+      ? (connectorConfigured ? 'federated_live' : 'federated_unconfigured')
+      : (connectorConfigured ? 'local_index_with_configured_connector' : 'local_index_only'),
+    liveConnectorCoverage: federated && connectorConfigured,
   };
 }
 

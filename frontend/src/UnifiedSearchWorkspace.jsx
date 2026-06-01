@@ -208,7 +208,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
                   <span className="source-icon">{sourceMeta[source]?.icon || 'SRC'}</span>
                   <span className="connector-main">
                     <strong>{sourceMeta[source]?.label || source}</strong>
-                    <small>{status?.status || check?.status || (connector?.configured ? 'configured' : 'not configured')}</small>
+                    <small>{formatSourceStatus(status) || check?.status || (connector?.configured ? 'configured' : 'not configured')}</small>
                     <span className={`mode-badge ${connector?.vectorizationMode === 'external_federated' ? 'federated' : 'indexed'}`}>
                       {connector?.vectorizationMode === 'external_federated' ? 'Federated vector space' : 'Indexed here'}
                     </span>
@@ -259,7 +259,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
 
         <div className="status-row">
           {DEFAULT_SOURCES.filter((source) => selectedSources.has(source)).map((source) => (
-            <span key={source}>{sourceMeta[source]?.label}: {sourceStatuses[source]?.status || 'idle'}</span>
+            <span key={source}>{sourceMeta[source]?.label}: {formatSourceStatus(sourceStatuses[source]) || 'idle'}</span>
           ))}
         </div>
 
@@ -348,4 +348,13 @@ function displayValue(value) {
   if (Array.isArray(value)) return value.map(displayValue).filter(Boolean).join(', ');
   if (typeof value === 'object') return value.name || value.email || value.address || value.label || JSON.stringify(value);
   return String(value);
+}
+
+function formatSourceStatus(status) {
+  if (!status?.status) return '';
+  if (status.status === 'completed' && status.searchMode === 'local_index_only') return 'completed, indexed data only';
+  if (status.status === 'completed' && status.searchMode === 'federated_live') return 'completed, live federated';
+  if (status.status === 'running' && status.searchMode === 'local_index_only') return 'running, indexed data only';
+  if (status.status === 'running' && status.searchMode === 'federated_live') return 'running, live federated';
+  return status.status;
 }

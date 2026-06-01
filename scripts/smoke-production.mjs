@@ -97,7 +97,10 @@ const run = await request('/v1/search-runs', {
   body: JSON.stringify({ tenantId, userId, query: marker, sources: ['slack'], wait: true, limit: 5 }),
 });
 assert(run.ok && run.data.results?.length, `search run failed: ${JSON.stringify(run.data)}`);
-console.log('slack fixture pipeline search run ok', { runId: run.data.searchRun.id, count: run.data.results.length });
+const slackFixtureStatus = run.data.searchRun?.sourceStatuses?.find((item) => item.source === 'slack');
+assert(slackFixtureStatus?.searchMode === 'local_index_only', `slack fixture search should report indexed-only mode while live auth is unconfigured: ${JSON.stringify(slackFixtureStatus)}`);
+assert(slackFixtureStatus?.liveConnectorCoverage === false, `slack fixture search should not claim live connector coverage: ${JSON.stringify(slackFixtureStatus)}`);
+console.log('slack fixture pipeline search run ok', { runId: run.data.searchRun.id, count: run.data.results.length, searchMode: slackFixtureStatus.searchMode });
 
 const action = await request('/v1/assistant/actions', {
   method: 'POST',

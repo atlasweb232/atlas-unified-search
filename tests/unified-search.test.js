@@ -211,6 +211,9 @@ test('unified search indexes fixture documents across all connector types', asyn
     });
     assert.equal(run.searchRun.status, 'completed');
     assert.ok(run.searchRun.sourceStatuses.every((status) => status.status === 'completed'));
+    assert.ok(run.searchRun.sourceStatuses.every((status) => status.liveConnectorCoverage === false));
+    assert.ok(run.searchRun.sourceStatuses.some((status) => status.source === 'knowledge_base' && status.searchMode === 'local_index_only'));
+    assert.ok(run.searchRun.sourceStatuses.some((status) => status.source === 'email' && status.searchMode === 'federated_unconfigured'));
     assert.ok(run.results.some((result) => result.source === 'conference_bridge'));
     assert.ok(run.results.every((result) => result.sourceIcon && result.sourceLabel));
 
