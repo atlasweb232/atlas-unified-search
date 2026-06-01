@@ -890,6 +890,7 @@ function webhookIngressReadiness(config) {
     ]),
     webhookGate('google_drive_changes', '/v1/webhooks/google-drive/changes', [
       ['GDRIVE_WEBHOOK_TOKEN', config.gdrive?.webhookToken],
+      ['GDRIVE_WEBHOOK_CHANNEL_IDS', config.gdrive?.webhookChannelIds?.length],
       ['GDRIVE_EVENT_TENANT_ID', config.gdrive?.eventTenantId],
       ['GDRIVE_EVENT_USER_ID', config.gdrive?.eventUserId],
     ]),

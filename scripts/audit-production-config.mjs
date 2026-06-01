@@ -98,6 +98,7 @@ const report = {
           ]),
         ]),
         envGate(apiEnv, 'GDRIVE_WEBHOOK_TOKEN', 'secretRef'),
+        envGate(apiEnv, 'GDRIVE_WEBHOOK_CHANNEL_IDS', 'value'),
         envGate(apiEnv, 'GDRIVE_EVENT_TENANT_ID', 'value'),
         envGate(apiEnv, 'GDRIVE_EVENT_USER_ID', 'value'),
       ]),

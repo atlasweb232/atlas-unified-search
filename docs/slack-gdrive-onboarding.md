@@ -189,15 +189,14 @@ helper proves that a refresh token was returned but redacts the token value.
 
 ```bash
 GDRIVE_WEBHOOK_TOKEN=<unguessable channel token>
-GDRIVE_WEBHOOK_CHANNEL_IDS=<optional comma-separated channel ids>
+GDRIVE_WEBHOOK_CHANNEL_IDS=<comma-separated channel ids returned by npm run gdrive:create-watch>
 GDRIVE_EVENT_TENANT_ID=atlasweb
 GDRIVE_EVENT_USER_ID=rakib.mahmood@tridentinter.io
 ```
 
 Google Drive push notifications do not include an HMAC signature. The endpoint
-therefore requires `X-Goog-Channel-Token` to match `GDRIVE_WEBHOOK_TOKEN` and,
-when configured, `X-Goog-Channel-ID` to be present in
-`GDRIVE_WEBHOOK_CHANNEL_IDS`.
+therefore requires `X-Goog-Channel-Token` to match `GDRIVE_WEBHOOK_TOKEN` and
+`X-Goog-Channel-ID` to be present in `GDRIVE_WEBHOOK_CHANNEL_IDS`.
 
 After Google credentials and the webhook token are present locally, create the
 Drive watch channel:
@@ -316,7 +315,7 @@ readiness gate passes.
 Google Drive Changes/watch can call `/v1/webhooks/google-drive/changes`
 directly. The endpoint bypasses the unified search bearer token only for Google
 Drive notifications, verifies `X-Goog-Channel-Token` against
-`GDRIVE_WEBHOOK_TOKEN`, optionally checks `X-Goog-Channel-ID` against
+`GDRIVE_WEBHOOK_TOKEN`, checks `X-Goog-Channel-ID` against
 `GDRIVE_WEBHOOK_CHANNEL_IDS`, maps the notification to `GDRIVE_EVENT_TENANT_ID`
 / `GDRIVE_EVENT_USER_ID`, and then uses the same readiness-gated event enqueue
 path internally. It still returns `409` until Google Drive OAuth or
