@@ -80,6 +80,18 @@ Subsequent Slack syncs resume from the last stored channel timestamp for the
 same tenant/user/channel. To intentionally rebuild a source, call
 `/v1/reindex/slack` or pass `options.forceFullSync=true`.
 
+If Slack credentials fail after wiring, remove only the runtime env bindings and
+leave stored secrets intact for later inspection or replacement:
+
+```bash
+export UNWIRE_CONNECTOR_SOURCES=slack
+export UNWIRE_CONNECTORS_DRY_RUN=true
+npm run unwire:production-connectors
+
+unset UNWIRE_CONNECTORS_DRY_RUN
+npm run unwire:production-connectors
+```
+
 Production note: later user onboarding should replace this with WorkOS Pipes or
 Nango. The connector should receive tokens from a `TokenProvider` and should not
 care whether the token came from `.env`, WorkOS, Nango, or direct OAuth.
@@ -154,6 +166,18 @@ curl -X POST "$UNIFIED_SEARCH_BASE_URL/v1/reindex/google_drive" \
 Subsequent Google Drive syncs resume from the last stored modified time for the
 same tenant/user/folder scope. To intentionally rebuild a source, call
 `/v1/reindex/google_drive` or pass `options.forceFullSync=true`.
+
+If Google Drive credentials fail after wiring, remove only the runtime env
+bindings and leave stored secrets intact for later inspection or replacement:
+
+```bash
+export UNWIRE_CONNECTOR_SOURCES=google_drive
+export UNWIRE_CONNECTORS_DRY_RUN=true
+npm run unwire:production-connectors
+
+unset UNWIRE_CONNECTORS_DRY_RUN
+npm run unwire:production-connectors
+```
 
 For service-account mode, set:
 
