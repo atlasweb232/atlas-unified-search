@@ -33,7 +33,7 @@ The unified search service is production-testable when these gates are true:
 - `GET /v1/connectors/readiness` returns explicit `ready/status/requirements` for each connector without exposing secret values.
 - `GET /v1/production-readiness` returns `readyForProductionTesting:true`, lists Slack/GDrive under `credentialBlockedSources` until real credentials are configured, and only sets `productionComplete:true` after every live source is proven.
 - `npm run audit:production-config` reports API/worker env wiring and credential blockers without printing secret values.
-- `WIRE_CONNECTORS_VALIDATE_FIRST=true npm run wire:production-connectors` validates supplied Slack, Google Drive, and Data Fabric credentials before updating either Container App; failed preflight must leave Azure env wiring unchanged.
+- `WIRE_CONNECTORS_VALIDATE_FIRST=true npm run wire:production-connectors` validates supplied Slack, Google Drive, and Data Fabric credentials before updating either Container App; Slack must pass channel history reads, Google Drive must pass file listing, and failed preflight must leave Azure env wiring unchanged.
 - `npm run wire:production-connectors` can wire Slack, Google Drive, and Data Fabric credentials into both Container Apps once real credentials exist; it does not turn fixture coverage into live coverage by itself.
 - Data Fabric live readiness requires `DATA_FABRIC_BASE_URL` and a service that implements `GET /health` and `GET /records?tenantId=&userId=&dataset=&since=&limit=`; `DATA_FABRIC_API_TOKEN` is optional but recommended.
 

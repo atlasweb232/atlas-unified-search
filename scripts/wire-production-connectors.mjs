@@ -133,8 +133,9 @@ async function validateConfiguredSources() {
   const registry = createConnectorRegistry(loadConfig());
   const results = [];
   for (const source of sources) {
+    const connector = registry.get(source);
     const readiness = (await registry.readiness(source))[0];
-    results.push({
+    const item = {
       source,
       ok: Boolean(readiness.ready),
       status: readiness.status,
@@ -142,9 +143,65 @@ async function validateConfiguredSources() {
         .filter((requirement) => !requirement.configured && !requirement.optional)
         .map((requirement) => requirement.name),
       error: readiness.error || '',
-    });
+      probes: [],
+    };
+    if (item.ok) {
+      item.probes = await probeConfiguredSource(source, connector);
+      item.ok = item.probes.every((probe) => probe.ok);
+    }
+    results.push(item);
   }
   return { ok: results.every((item) => item.ok), sources: results };
+}
+
+async function probeConfiguredSource(source, connector) {
+  if (source === 'slack') return probeSlack(connector);
+  if (source === 'google_drive') return probeGoogleDrive(connector);
+  if (source === 'data_fabric') return probeDataFabric(connector);
+  return [{ name: 'readiness', ok: true }];
+}
+
+async function probeSlack(connector) {
+  const channelIds = connector.config.channelIds.slice(0, 3);
+  const probes = [];
+  for (const channelId of channelIds) {
+    try {
+      const history = await connector.call('conversations.history', { channel: channelId, limit: '1' });
+      probes.push({
+        name: 'slack_channel_history',
+        ok: true,
+        channelId,
+        sampleMessageVisible: Boolean(history.messages?.length),
+      });
+    } catch (error) {
+      probes.push({ name: 'slack_channel_history', ok: false, channelId, error: error.message });
+    }
+  }
+  return probes.length ? probes : [{ name: 'slack_channel_history', ok: false, error: 'No Slack channel IDs configured' }];
+}
+
+async function probeGoogleDrive(connector) {
+  try {
+    const drive = (await import('googleapis')).google.drive({ version: 'v3', auth: await connector.auth() });
+    const files = await connector.listFiles(drive, { limit: 1, folderIds: connector.config.folderIds });
+    return [{
+      name: 'google_drive_file_list',
+      ok: true,
+      folderScoped: Boolean(connector.config.folderIds.length),
+      sampleFileVisible: Boolean(files.length),
+    }];
+  } catch (error) {
+    return [{ name: 'google_drive_file_list', ok: false, error: error.message }];
+  }
+}
+
+async function probeDataFabric(connector) {
+  try {
+    const readinessResult = await connector.checkReadiness();
+    return [{ name: 'data_fabric_readiness', ok: Boolean(readinessResult.ready), status: readinessResult.status }];
+  } catch (error) {
+    return [{ name: 'data_fabric_readiness', ok: false, error: error.message }];
+  }
 }
 
 async function readiness(url, authToken) {

@@ -58,7 +58,9 @@ Strict preflight validates the connector from the local environment before
 touching Azure Container Apps. It fails closed if Slack channel access, Google
 Drive auth, or Data Fabric readiness cannot be proven. The failure report
 includes missing env names and provider error messages, but does not print
-secret values.
+secret values. For Slack, preflight also calls `conversations.history` on the
+configured channels so an installed app without channel membership is rejected
+before Azure is updated.
 
 9. Start a live sync:
 
@@ -125,10 +127,10 @@ export WIRE_CONNECTORS_VALIDATE_FIRST=true
 npm run wire:production-connectors
 ```
 
-Strict preflight validates Google Drive auth and file-list access before Azure
-Container Apps are updated. If OAuth returns `invalid_client`,
-`invalid_grant`, or folder access is missing, the script exits before wiring the
-bad secret refs into production.
+Strict preflight validates Google Drive auth and a `files.list` read before
+Azure Container Apps are updated. If OAuth returns `invalid_client`,
+`invalid_grant`, or the Drive API cannot list files, the script exits before
+wiring the bad secret refs into production.
 
 8. Start a live sync:
 
