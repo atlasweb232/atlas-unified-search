@@ -276,6 +276,21 @@ export class JsonSearchStore {
     return row;
   }
 
+  searchChunks({ tenantId, userId, sources = [], queryVector, candidateLimit, filters = {} }) {
+    const sourceSet = new Set(sources.filter(Boolean));
+    const candidates = [];
+    for (const chunk of Object.values(this.state.chunks)) {
+      if (chunk.tenantId !== tenantId || chunk.userId !== userId) continue;
+      if (sourceSet.size && !sourceSet.has(chunk.source)) continue;
+      const document = this.state.documents[chunk.documentId];
+      if (!document || !passesFilters(document, filters)) continue;
+      const distance = cosineSimilarity(queryVector, chunk.embedding);
+      candidates.push({ document, chunk, distance });
+    }
+    candidates.sort((a, b) => b.distance - a.distance);
+    return candidates.slice(0, candidateLimit);
+  }
+
   status() {
     const documents = this.listDocuments();
     const chunks = this.listChunks();
@@ -344,9 +359,15 @@ function redactSecret(value) {
 }
 
 export class SearchEngine {
-  constructor({ store, embedder }) {
+  constructor({ store, embedder, weights = {} }) {
     this.store = store;
     this.embedder = embedder;
+    this.weights = {
+      vector: Number.isFinite(weights.vector) ? weights.vector : 0.72,
+      lexical: Number.isFinite(weights.lexical) ? weights.lexical : 0.22,
+      recency: Number.isFinite(weights.recency) ? weights.recency : 0.06,
+    };
+    this.candidateMultiplier = Number.isFinite(weights.candidateMultiplier) ? weights.candidateMultiplier : 5;
   }
 
   async indexDocuments(documents, { chunker }) {
@@ -366,26 +387,23 @@ export class SearchEngine {
 
   async search({ tenantId, userId, query, sources = [], filters = {}, limit = 10 }) {
     const queryVector = await this.embedder.embed(query);
-    const sourceSet = new Set(sources.filter(Boolean));
-    const chunks = this.store.listChunks().filter((chunk) => {
-      if (chunk.tenantId !== tenantId || chunk.userId !== userId) return false;
-      if (sourceSet.size && !sourceSet.has(chunk.source)) return false;
-      return true;
+    const candidateLimit = Math.max(limit * this.candidateMultiplier, 50);
+    const rawCandidates = this.store.searchChunks({
+      tenantId, userId, sources, queryVector, candidateLimit, filters,
     });
-    const candidates = new Map();
-    for (const chunk of chunks) {
-      const document = this.store.getDocument(chunk.documentId);
-      if (!document || !passesFilters(document, filters)) continue;
-      const vector = cosineSimilarity(queryVector, chunk.embedding);
+    const best = new Map();
+    for (const { document, chunk, distance } of rawCandidates) {
       const lexical = lexicalScore(query, `${document.title} ${document.summary} ${chunk.text}`);
       const recency = recencyBoost(document.timestamp);
-      const score = vector * 0.72 + lexical * 0.22 + recency * 0.06;
-      const existing = candidates.get(document.id);
+      const score = distance * this.weights.vector
+        + lexical * this.weights.lexical
+        + recency * this.weights.recency;
+      const existing = best.get(document.id);
       if (!existing || score > existing.score) {
-        candidates.set(document.id, { document, score, matchedChunk: chunk.summary });
+        best.set(document.id, { document, score, matchedChunk: chunk.summary });
       }
     }
-    return [...candidates.values()]
+    return [...best.values()]
       .sort((left, right) => right.score - left.score)
       .slice(0, Math.min(limit, 50))
       .map(({ document, score, matchedChunk }) => ({

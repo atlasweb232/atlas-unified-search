@@ -128,5 +128,11 @@ export function loadConfig() {
       readinessPath: process.env.DATA_FABRIC_READINESS_PATH || '/health',
       recordsPath: process.env.DATA_FABRIC_RECORDS_PATH || '/records',
     },
+    search: {
+      vectorWeight: number('SEARCH_VECTOR_WEIGHT', 72) / 100,
+      lexicalWeight: number('SEARCH_LEXICAL_WEIGHT', 22) / 100,
+      recencyWeight: number('SEARCH_RECENCY_WEIGHT', 6) / 100,
+      candidateMultiplier: number('SEARCH_CANDIDATE_MULTIPLIER', 5),
+    },
   };
 }
