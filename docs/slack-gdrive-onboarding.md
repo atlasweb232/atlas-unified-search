@@ -6,6 +6,15 @@ All credentials stay backend-side.
 ## Slack Personal Bot Setup
 
 1. Create a Slack app at `https://api.slack.com/apps`.
+   To avoid hand-entering scopes and webhook URLs, generate the app manifest
+   from the deployed backend URL:
+
+```bash
+export UNIFIED_SEARCH_BASE_URL='https://atlas-unified-search.proudfield-a201b3fd.eastus.azurecontainerapps.io'
+npm run slack:app-manifest
+```
+
+   Paste the `manifest` object into Slack's "Create from an app manifest" flow.
 2. Add bot token scopes:
    - `channels:read`
    - `channels:history`
@@ -125,6 +134,9 @@ For personal testing, use OAuth refresh token auth.
 1. Create a Google Cloud project.
 2. Enable Google Drive API.
 3. Create OAuth credentials.
+   For personal testing, an "OAuth client ID" for a desktop app is the simplest
+   path because the helper can generate a local authorization URL and exchange
+   the returned code for a refresh token.
 4. Authorize scopes:
    - `https://www.googleapis.com/auth/drive.readonly`
 5. Store these backend-side:
@@ -135,6 +147,26 @@ GOOGLE_CLIENT_SECRET=...
 GOOGLE_REFRESH_TOKEN=...
 GDRIVE_FOLDER_IDS=<optional comma-separated folder ids>
 ```
+
+Generate the authorization URL:
+
+```bash
+export GOOGLE_CLIENT_ID='...'
+export GOOGLE_CLIENT_SECRET='...'
+npm run gdrive:create-refresh-token
+```
+
+Open the returned `authorizationUrl`, approve Drive read access, then exchange
+the code:
+
+```bash
+export GOOGLE_AUTH_CODE='<code returned by Google>'
+export GOOGLE_OAUTH_PRINT_SECRET=true
+npm run gdrive:create-refresh-token
+```
+
+Use `GOOGLE_OAUTH_PRINT_SECRET=true` only on a trusted terminal. Without it, the
+helper proves that a refresh token was returned but redacts the token value.
 
 6. For near-real-time Google Drive push notifications, create a watch channel
    with an unguessable token and set the webhook URL to
