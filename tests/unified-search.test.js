@@ -10,6 +10,7 @@ import { isRetryableSyncError, JobRunner } from '../src/jobRunner.js';
 import { SearchRunCoordinator } from '../src/searchRun.js';
 import { JsonSearchStore } from '../src/store.js';
 import { PostgresSearchStore } from '../src/stores/postgresStore.js';
+import { createConnectorRegistry } from '../src/connectors/index.js';
 
 function config(dataDir) {
   return {
@@ -124,6 +125,41 @@ test('configured CORS allowlist only exposes allowed origins', async () => {
     if (server) await new Promise((resolve) => server.close(resolve));
     await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
+});
+
+test('connector token provider resolves tenant user scoped Slack and Drive credentials', async () => {
+  const base = config('/tmp/unused');
+  const registry = createConnectorRegistry({
+    ...base,
+    connectorTokens: {
+      'tenant-a:user-a': {
+        slack: {
+          SLACK_BOT_TOKEN: 'xoxb-scoped',
+          SLACK_CHANNEL_IDS: 'C1,C2',
+        },
+        google_drive: {
+          GOOGLE_CLIENT_ID: 'client',
+          GOOGLE_CLIENT_SECRET: 'secret',
+          GOOGLE_REFRESH_TOKEN: 'refresh',
+          GDRIVE_FOLDER_IDS: ['folder-a'],
+        },
+      },
+    },
+  });
+
+  const slack = registry.get('slack');
+  assert.equal(slack.isConfigured({ tenantId: 'tenant-a', userId: 'user-a' }), true);
+  assert.equal(slack.isConfigured({ tenantId: 'tenant-b', userId: 'user-a' }), false);
+  assert.deepEqual(slack.credentials({ tenantId: 'tenant-a', userId: 'user-a' }).channelIds, ['C1', 'C2']);
+  assert.ok(slack.requirements({ tenantId: 'tenant-a', userId: 'user-a' }).every((item) => item.configured));
+
+  const gdrive = registry.get('google_drive');
+  assert.equal(gdrive.isConfigured({ tenantId: 'tenant-a', userId: 'user-a' }), true);
+  assert.equal(gdrive.isConfigured({ tenantId: 'tenant-b', userId: 'user-a' }), false);
+  assert.deepEqual(gdrive.credentials({ tenantId: 'tenant-a', userId: 'user-a' }).folderIds, ['folder-a']);
+  const requirements = gdrive.requirements({ tenantId: 'tenant-a', userId: 'user-a' });
+  assert.equal(requirements.find((item) => item.name === 'GOOGLE_REFRESH_TOKEN').configured, true);
+  assert.equal(requirements.find((item) => item.name === 'GDRIVE_FOLDER_IDS').configured, true);
 });
 
 test('postgres store persists document and checkpoint deletes', async () => {

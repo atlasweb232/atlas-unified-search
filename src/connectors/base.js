@@ -11,35 +11,35 @@ export class ConnectorRegistry {
     return connector;
   }
 
-  list() {
+  list(scope = {}) {
     return [...this.connectors.values()].map((connector) => ({
       source: connector.source,
-      configured: connector.isConfigured(),
+      configured: connector.isConfigured(scope),
       practical: connector.practical,
       description: connector.description,
       vectorizationMode: connector.vectorizationMode || 'local_index',
-      requirements: typeof connector.requirements === 'function' ? connector.requirements() : [],
+      requirements: typeof connector.requirements === 'function' ? connector.requirements(scope) : [],
     }));
   }
 
-  async readiness(source = '') {
+  async readiness(source = '', scope = {}) {
     const connectors = source ? [this.get(source)] : [...this.connectors.values()];
     return Promise.all(connectors.map(async (connector) => {
       const base = {
         source: connector.source,
-        configured: connector.isConfigured(),
+        configured: connector.isConfigured(scope),
         practical: connector.practical,
         vectorizationMode: connector.vectorizationMode || 'local_index',
-        requirements: typeof connector.requirements === 'function' ? connector.requirements() : [],
+        requirements: typeof connector.requirements === 'function' ? connector.requirements(scope) : [],
       };
-      if (!connector.isConfigured()) {
+      if (!connector.isConfigured(scope)) {
         return { ...base, ready: false, status: 'missing_configuration' };
       }
       if (typeof connector.checkReadiness !== 'function') {
         return { ...base, ready: true, status: 'configured' };
       }
       try {
-        const result = await connector.checkReadiness();
+        const result = await connector.checkReadiness(scope);
         return { ...base, ready: Boolean(result.ready), status: result.status || 'checked', details: result.details || {} };
       } catch (error) {
         return { ...base, ready: false, status: 'check_failed', error: error.message };

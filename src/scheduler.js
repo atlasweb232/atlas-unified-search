@@ -75,7 +75,7 @@ async function runSchedule(schedule) {
   }
 
   const connector = registry.get(schedule.source);
-  const readiness = await registry.readiness(schedule.source);
+  const readiness = await registry.readiness(schedule.source, { tenantId: schedule.tenantId, userId: schedule.userId });
   if (!readiness[0]?.ready) {
     console.warn('Scheduled sync skipped because connector is not ready', {
       schedule: schedule.name,

@@ -4,29 +4,38 @@ import { checkpointKey } from './base.js';
 const SLACK_API_BASE = 'https://slack.com/api';
 
 export class SlackConnector {
-  constructor(config) {
+  constructor(config, tokenProvider = null) {
     this.source = SOURCES.slack;
     this.config = config.slack;
+    this.tokenProvider = tokenProvider;
     this.practical = true;
     this.description = 'Slack bot-token connector for messages, threads, links, and file metadata.';
   }
 
-  isConfigured() {
-    return Boolean(this.config.botToken && this.config.channelIds.length);
+  isConfigured(scope = {}) {
+    const credentials = this.credentials(scope);
+    return Boolean(credentials.botToken && credentials.channelIds?.length);
   }
 
-  requirements() {
-    return [
+  requirements(scope = {}) {
+    const credentials = this.credentials(scope);
+    const requirements = [
       { name: 'SLACK_BOT_TOKEN', configured: Boolean(this.config.botToken) },
       { name: 'SLACK_CHANNEL_IDS', configured: Boolean(this.config.channelIds.length) },
     ];
+    if (this.tokenProvider) return this.tokenProvider.requirements(this.source, scope, requirements);
+    return requirements.map((requirement) => ({
+      ...requirement,
+      configured: requirement.name === 'SLACK_BOT_TOKEN' ? Boolean(credentials.botToken) : Boolean(credentials.channelIds?.length),
+    }));
   }
 
-  async checkReadiness() {
-    const auth = await this.call('auth.test', {});
+  async checkReadiness(scope = {}) {
+    const auth = await this.call('auth.test', {}, scope);
     const channelChecks = [];
-    for (const channelId of this.config.channelIds.slice(0, 5)) {
-      const channel = await this.call('conversations.info', { channel: channelId });
+    const credentials = this.credentials(scope);
+    for (const channelId of credentials.channelIds.slice(0, 5)) {
+      const channel = await this.call('conversations.info', { channel: channelId }, scope);
       channelChecks.push({ channelId, name: channel.channel?.name || channelId, accessible: true });
     }
     return {
@@ -43,24 +52,26 @@ export class SlackConnector {
 
   async sync({ tenantId, userId, store, options = {} }) {
     if (options.fixtures) return options.fixtures.map((item) => slackFixtureToDocument({ tenantId, userId, item }));
-    if (!this.isConfigured()) throw new Error('Slack connector is not configured');
-    const channelIds = options.channelIds?.length ? options.channelIds : this.config.channelIds;
+    const scope = { tenantId, userId };
+    if (!this.isConfigured(scope)) throw new Error('Slack connector is not configured');
+    const credentials = this.credentials(scope);
+    const channelIds = options.channelIds?.length ? options.channelIds : credentials.channelIds;
     const documents = [];
     for (const channelId of channelIds) {
       const key = checkpointKey(this.source, tenantId, userId, `channel:${channelId}`);
       const checkpoint = options.forceFullSync ? null : store?.getCheckpoint(key);
       const oldest = options.sinceTs || checkpoint?.latestTs || '';
-      const channel = await this.call('conversations.info', { channel: channelId }).catch(() => ({ channel: { id: channelId, name: channelId } }));
+      const channel = await this.call('conversations.info', { channel: channelId }, scope).catch(() => ({ channel: { id: channelId, name: channelId } }));
       const messages = await this.paginate('conversations.history', {
         channel: channelId,
         limit: String(options.limit || this.config.limit),
         ...(oldest ? { oldest } : {}),
-      }, 'messages');
+      }, 'messages', scope);
       let latestTs = checkpoint?.latestTs || '';
       for (const message of messages) {
         if (!message.ts || message.subtype === 'message_deleted') continue;
-        const replies = message.thread_ts ? await this.paginate('conversations.replies', { channel: channelId, ts: message.thread_ts, limit: '200' }, 'messages') : [];
-        const permalink = await this.call('chat.getPermalink', { channel: channelId, message_ts: message.ts }).then((data) => data.permalink).catch(() => '');
+        const replies = message.thread_ts ? await this.paginate('conversations.replies', { channel: channelId, ts: message.thread_ts, limit: '200' }, 'messages', scope) : [];
+        const permalink = await this.call('chat.getPermalink', { channel: channelId, message_ts: message.ts }, scope).then((data) => data.permalink).catch(() => '');
         documents.push(slackMessageToDocument({ tenantId, userId, channel: channel.channel, message, replies, permalink }));
         if (!latestTs || slackTsNumber(message.ts) > slackTsNumber(latestTs)) latestTs = message.ts;
       }
@@ -78,22 +89,23 @@ export class SlackConnector {
     return documents;
   }
 
-  async paginate(method, params, key) {
+  async paginate(method, params, key, scope = {}) {
     const items = [];
     let cursor = '';
     do {
-      const data = await this.call(method, cursor ? { ...params, cursor } : params);
+      const data = await this.call(method, cursor ? { ...params, cursor } : params, scope);
       items.push(...(data[key] || []));
       cursor = data.response_metadata?.next_cursor || '';
     } while (cursor);
     return items;
   }
 
-  async call(method, params) {
+  async call(method, params, scope = {}) {
+    const credentials = this.credentials(scope);
     const response = await fetch(`${SLACK_API_BASE}/${method}`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${this.config.botToken}`,
+        Authorization: `Bearer ${credentials.botToken}`,
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: new URLSearchParams(params),
@@ -102,6 +114,18 @@ export class SlackConnector {
     if (!response.ok || data.ok === false) throw new Error(data.error || `Slack ${method} failed`);
     return data;
   }
+
+  credentials(scope = {}) {
+    const credentials = this.tokenProvider?.credentialsFor(this.source, scope) || this.config;
+    return {
+      ...credentials,
+      channelIds: Array.isArray(credentials.channelIds) ? credentials.channelIds : list(credentials.channelIds),
+    };
+  }
+}
+
+function list(value) {
+  return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
 }
 
 function slackFixtureToDocument({ tenantId, userId, item }) {

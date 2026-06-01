@@ -9,32 +9,41 @@ const EXPORT_TYPES = {
 };
 
 export class GoogleDriveConnector {
-  constructor(config) {
+  constructor(config, tokenProvider = null) {
     this.source = SOURCES.gdrive;
     this.config = config.gdrive;
+    this.tokenProvider = tokenProvider;
     this.practical = true;
     this.description = 'Google Drive connector for file metadata, exported docs, text extraction, and attachment-like files.';
   }
 
-  isConfigured() {
+  isConfigured(scope = {}) {
+    const credentials = this.credentials(scope);
     return Boolean(
-      this.config.serviceAccountJson ||
-      (this.config.clientId && this.config.clientSecret && this.config.refreshToken),
+      credentials.serviceAccountJson ||
+      (credentials.clientId && credentials.clientSecret && credentials.refreshToken),
     );
   }
 
-  requirements() {
-    return [
+  requirements(scope = {}) {
+    const credentials = this.credentials(scope);
+    const requirements = [
       { name: 'GOOGLE_SERVICE_ACCOUNT_JSON', configured: Boolean(this.config.serviceAccountJson), alternativeGroup: 'google_auth' },
       { name: 'GOOGLE_CLIENT_ID', configured: Boolean(this.config.clientId), alternativeGroup: 'google_auth' },
       { name: 'GOOGLE_CLIENT_SECRET', configured: Boolean(this.config.clientSecret), alternativeGroup: 'google_auth' },
       { name: 'GOOGLE_REFRESH_TOKEN', configured: Boolean(this.config.refreshToken), alternativeGroup: 'google_auth' },
       { name: 'GDRIVE_FOLDER_IDS', configured: Boolean(this.config.folderIds.length), optional: true },
     ];
+    if (this.tokenProvider) return this.tokenProvider.requirements(this.source, scope, requirements);
+    return requirements.map((requirement) => ({
+      ...requirement,
+      configured: configuredForRequirement(requirement.name, credentials),
+    }));
   }
 
-  async checkReadiness() {
-    const drive = google.drive({ version: 'v3', auth: await this.auth() });
+  async checkReadiness(scope = {}) {
+    const credentials = this.credentials(scope);
+    const drive = google.drive({ version: 'v3', auth: await this.auth(scope) });
     const response = await drive.files.list({
       q: 'trashed=false',
       pageSize: 1,
@@ -47,22 +56,24 @@ export class GoogleDriveConnector {
       status: 'ok',
       details: {
         sampleFileVisible: Boolean(response.data.files?.length),
-        folderScoped: Boolean(this.config.folderIds.length),
-        configuredFolderCount: this.config.folderIds.length,
+        folderScoped: Boolean(credentials.folderIds.length),
+        configuredFolderCount: credentials.folderIds.length,
       },
     };
   }
 
   async sync({ tenantId, userId, store, options = {} }) {
     if (options.fixtures) return options.fixtures.map((item) => driveFixtureToDocument({ tenantId, userId, item }));
-    if (!this.isConfigured()) throw new Error('Google Drive connector is not configured');
-    const drive = google.drive({ version: 'v3', auth: await this.auth() });
-    const folderIds = options.folderIds?.length ? options.folderIds : this.config.folderIds;
+    const scope = { tenantId, userId };
+    if (!this.isConfigured(scope)) throw new Error('Google Drive connector is not configured');
+    const credentials = this.credentials(scope);
+    const drive = google.drive({ version: 'v3', auth: await this.auth(scope) });
+    const folderIds = options.folderIds?.length ? options.folderIds : credentials.folderIds;
     const checkpointName = `files:${folderIds.length ? folderIds.join(',') : 'all'}`;
     const key = checkpointKey(this.source, tenantId, userId, checkpointName);
     const checkpoint = options.forceFullSync ? null : store?.getCheckpoint(key);
     const modifiedAfter = options.modifiedAfter || checkpoint?.latestModifiedTime || '';
-    const files = await this.listFiles(drive, { ...options, folderIds, modifiedAfter });
+    const files = await this.listFiles(drive, { ...options, credentials, folderIds, modifiedAfter });
     const documents = [];
     let latestModifiedTime = checkpoint?.latestModifiedTime || '';
     for (const file of files) {
@@ -82,21 +93,22 @@ export class GoogleDriveConnector {
     return documents;
   }
 
-  async auth() {
-    if (this.config.serviceAccountJson) {
-      const credentials = JSON.parse(this.config.serviceAccountJson);
+  async auth(scope = {}) {
+    const credentials = this.credentials(scope);
+    if (credentials.serviceAccountJson) {
+      const serviceAccount = JSON.parse(credentials.serviceAccountJson);
       return new google.auth.GoogleAuth({
-        credentials,
+        credentials: serviceAccount,
         scopes: ['https://www.googleapis.com/auth/drive.readonly'],
       });
     }
-    const oauth2Client = new google.auth.OAuth2(this.config.clientId, this.config.clientSecret);
-    oauth2Client.setCredentials({ refresh_token: this.config.refreshToken });
+    const oauth2Client = new google.auth.OAuth2(credentials.clientId, credentials.clientSecret);
+    oauth2Client.setCredentials({ refresh_token: credentials.refreshToken });
     return oauth2Client;
   }
 
   async listFiles(drive, options) {
-    const folderIds = options.folderIds?.length ? options.folderIds : this.config.folderIds;
+    const folderIds = options.folderIds?.length ? options.folderIds : options.credentials?.folderIds || this.credentials({}).folderIds;
     const folderQuery = folderIds.length
       ? ` and (${folderIds.map((id) => `'${id}' in parents`).join(' or ')})`
       : '';
@@ -126,6 +138,30 @@ export class GoogleDriveConnector {
     }
     return { text: '', exportMimeType: '', skipped: 'binary_or_unsupported' };
   }
+
+  credentials(scope = {}) {
+    const credentials = this.tokenProvider?.credentialsFor(this.source, scope) || this.config;
+    return {
+      ...credentials,
+      folderIds: Array.isArray(credentials.folderIds) ? credentials.folderIds : list(credentials.folderIds),
+    };
+  }
+}
+
+function configuredForRequirement(name, credentials) {
+  const values = {
+    GOOGLE_SERVICE_ACCOUNT_JSON: credentials.serviceAccountJson,
+    GOOGLE_CLIENT_ID: credentials.clientId,
+    GOOGLE_CLIENT_SECRET: credentials.clientSecret,
+    GOOGLE_REFRESH_TOKEN: credentials.refreshToken,
+    GDRIVE_FOLDER_IDS: credentials.folderIds,
+  };
+  const value = values[name];
+  return Array.isArray(value) ? value.length > 0 : Boolean(value);
+}
+
+function list(value) {
+  return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
 }
 
 function isAfter(left, right) {

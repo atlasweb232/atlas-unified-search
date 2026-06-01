@@ -61,12 +61,12 @@ export async function createApp(config) {
   });
 
   app.get('/v1/connectors', (req, res) => {
-    res.json({ success: true, connectors: registry.list() });
+    res.json({ success: true, connectors: registry.list(scopeFromRequest(req)) });
   });
 
   app.get('/v1/connectors/readiness', async (req, res) => {
     try {
-      const checks = await registry.readiness(req.query.source || '');
+      const checks = await registry.readiness(req.query.source || '', scopeFromRequest(req));
       res.json({ success: true, checks });
     } catch (error) {
       res.status(400).json({ success: false, error: error.message });
@@ -75,7 +75,7 @@ export async function createApp(config) {
 
   app.get('/v1/connectors/setup', async (req, res) => {
     try {
-      const checks = await registry.readiness(req.query.source || '');
+      const checks = await registry.readiness(req.query.source || '', scopeFromRequest(req));
       res.json({ success: true, setup: connectorSetupGuide(checks) });
     } catch (error) {
       res.status(400).json({ success: false, error: error.message });
@@ -281,7 +281,7 @@ export async function createApp(config) {
       return res.status(403).json({ success: false, error: `Source is not enabled for this user: ${req.params.source}` });
     }
     try {
-      await requireReadyConnector(registry, req.params.source, options);
+      await requireReadyConnector(registry, req.params.source, options, { tenantId, userId });
       const job = await jobs.enqueue({ source: req.params.source, tenantId, userId, options, autoStart: !wait });
       if (wait) {
         const result = await jobs.run(job.id, { source: req.params.source, tenantId, userId, options });
@@ -487,7 +487,7 @@ export async function createApp(config) {
       return res.status(403).json({ success: false, error: `Source is not enabled for this user: ${req.params.source}` });
     }
     try {
-      await requireReadyConnector(registry, req.params.source, options);
+      await requireReadyConnector(registry, req.params.source, options, { tenantId, userId });
       await refreshStore(store);
       const deleted = store.deleteDocuments({ tenantId, userId, source: req.params.source });
       const checkpoints = store.deleteCheckpoints({ tenantId, userId, source: req.params.source });
@@ -594,7 +594,7 @@ async function enqueueConnectorEvent({ config, registry, store, jobs, source, te
     throw error;
   }
   const eventOptions = connectorEventOptions(source, event, options);
-  await requireReadyConnector(registry, source, eventOptions);
+  await requireReadyConnector(registry, source, eventOptions, { tenantId, userId });
   await refreshStore(store);
   store.audit({
     eventType: 'connector_event_received',
@@ -612,9 +612,9 @@ async function enqueueConnectorEvent({ config, registry, store, jobs, source, te
   return { job, eventTrigger: eventOptions.eventTrigger };
 }
 
-async function requireReadyConnector(registry, source, options = {}) {
+async function requireReadyConnector(registry, source, options = {}, scope = {}) {
   if (options.fixtures) return;
-  const [check] = await registry.readiness(source);
+  const [check] = await registry.readiness(source, scope);
   if (check?.ready) return;
   const missing = (check?.requirements || [])
     .filter((requirement) => !requirement.configured && !requirement.optional)
@@ -634,6 +634,13 @@ function matchesScope(req, row) {
   const tenantId = req.query.tenantId || req.headers['x-tenant-id'];
   const userId = req.query.userId || req.headers['x-user-id'];
   return Boolean(tenantId && userId && row.tenantId === tenantId && row.userId === userId);
+}
+
+function scopeFromRequest(req) {
+  return {
+    tenantId: req.query.tenantId || req.headers['x-tenant-id'] || '',
+    userId: req.query.userId || req.headers['x-user-id'] || '',
+  };
 }
 
 function writeSse(res, event, data) {

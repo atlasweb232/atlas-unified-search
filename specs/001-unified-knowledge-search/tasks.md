@@ -60,6 +60,7 @@
 - [x] Add tenant/user access filter.
 - [x] Add audit logs.
 - [x] Add secret redaction.
+- [x] Add connector token provider boundary for tenant/user scoped Slack and Google Drive credentials.
 - [x] Add deletion/reindex workflow.
 - [x] Add explicit connector-scoped document deletion endpoint.
 - [x] Add per-source sync permissions.

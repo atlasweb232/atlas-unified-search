@@ -67,4 +67,6 @@ the new watch values and rerun the audit/status commands above.
 
 ## Remaining Enhancements
 
-- Add WorkOS/Nango token provider for multi-user connector onboarding.
+- Add WorkOS/Nango token provider implementation behind the existing
+  `ConnectorTokenProvider` boundary. The current deployed backend supports
+  direct env credentials and tenant/user scoped `UNIFIED_SEARCH_CONNECTOR_TOKENS_JSON`.

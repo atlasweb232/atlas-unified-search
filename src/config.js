@@ -55,6 +55,7 @@ export function loadConfig() {
       origins: list('UNIFIED_SEARCH_CORS_ORIGINS'),
     },
     sourcePermissions: json('UNIFIED_SEARCH_SOURCE_PERMISSIONS', {}),
+    connectorTokens: json('UNIFIED_SEARCH_CONNECTOR_TOKENS_JSON', {}),
     searchRun: {
       sourceTimeoutMs: number('UNIFIED_SEARCH_SOURCE_TIMEOUT_MS', 30000),
       streamTtlMs: number('UNIFIED_SEARCH_STREAM_TTL_MS', 300000),

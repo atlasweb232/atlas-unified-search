@@ -124,9 +124,34 @@ unset UNWIRE_CONNECTORS_DRY_RUN
 npm run unwire:production-connectors
 ```
 
-Production note: later user onboarding should replace this with WorkOS Pipes or
-Nango. The connector should receive tokens from a `TokenProvider` and should not
-care whether the token came from `.env`, WorkOS, Nango, or direct OAuth.
+Production note: connectors now read credentials through a backend
+`ConnectorTokenProvider`. Direct `.env` values remain the fallback for personal
+testing, and `UNIFIED_SEARCH_CONNECTOR_TOKENS_JSON` can provide tenant/user
+scoped credentials without changing connector code. WorkOS Pipes, Nango, or
+Key Vault-backed onboarding should plug into this provider boundary rather than
+adding source-specific token logic to Slack or Google Drive connectors.
+
+Scoped token JSON shape:
+
+```json
+{
+  "atlasweb:rakib.mahmood@tridentinter.io": {
+    "slack": {
+      "SLACK_BOT_TOKEN": "xoxb-...",
+      "SLACK_CHANNEL_IDS": "C0123456789,C9876543210"
+    },
+    "google_drive": {
+      "GOOGLE_CLIENT_ID": "...",
+      "GOOGLE_CLIENT_SECRET": "...",
+      "GOOGLE_REFRESH_TOKEN": "...",
+      "GDRIVE_FOLDER_IDS": "folder-id-1,folder-id-2"
+    }
+  }
+}
+```
+
+Use `tenant:*`, `*:user`, or `*:*` entries only when intentionally sharing a
+connector credential across scopes.
 
 ## Google Drive Setup
 
@@ -153,6 +178,11 @@ GOOGLE_CLIENT_SECRET=...
 GOOGLE_REFRESH_TOKEN=...
 GDRIVE_FOLDER_IDS=<optional comma-separated folder ids>
 ```
+
+For multi-user onboarding, the same values can be supplied in
+`UNIFIED_SEARCH_CONNECTOR_TOKENS_JSON` under the tenant/user scope instead of as
+global env vars. Scoped values override global env fallbacks for sync,
+readiness, and scheduler checks.
 
 Generate the authorization URL:
 

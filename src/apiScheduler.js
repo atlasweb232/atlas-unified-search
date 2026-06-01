@@ -66,7 +66,7 @@ async function runSchedule(schedule) {
     return;
   }
 
-  const readiness = await request(`/v1/connectors/readiness?source=${encodeURIComponent(schedule.source)}`);
+  const readiness = await request(`/v1/connectors/readiness?source=${encodeURIComponent(schedule.source)}&tenantId=${encodeURIComponent(schedule.tenantId)}&userId=${encodeURIComponent(schedule.userId)}`);
   const check = readiness.checks?.[0];
   if (!check?.ready) {
     console.warn('Scheduled API sync skipped because connector is not ready', {
