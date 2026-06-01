@@ -24,6 +24,7 @@ The unified search service is production-testable when these gates are true:
 - Scoped deletion and `/v1/reindex/{source}` are available for tenant/user/source resets without deleting other users' data.
 - `/v1/sync/{source}` and `/v1/reindex/{source}` reject live connector jobs with `409` unless readiness passes; `/v1/reindex/{source}` must not delete existing indexed data when Slack/Drive auth is missing or invalid.
 - `/v1/events/{source}` accepts authenticated provider events, strips fixture bypasses, audits a redacted event summary, and queues only readiness-gated tenant/user-scoped sync jobs.
+- `/v1/webhooks/slack/events` accepts Slack Events API payloads only with a valid `X-Slack-Signature`, fresh `X-Slack-Request-Timestamp`, and configured `SLACK_SIGNING_SECRET`, `SLACK_EVENT_TENANT_ID`, and `SLACK_EVENT_USER_ID`; signed events still return `409` until Slack live readiness passes.
 - `UNIFIED_SEARCH_SOURCE_TIMEOUT_MS` is configured or defaults to 30000ms so a hung federated source-agent produces a partial search run instead of blocking the whole query.
 - `UNIFIED_SEARCH_SYNC_RETRY_ATTEMPTS` and `UNIFIED_SEARCH_SYNC_RETRY_BASE_DELAY_MS` provide bounded retries for transient source sync failures while configuration/auth failures fail fast.
 - Slack and Google Drive syncs persist tenant/user-scoped checkpoints; use `forceFullSync` or `/v1/reindex/{source}` to intentionally rescan.

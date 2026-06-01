@@ -73,6 +73,9 @@ const report = {
       groupGate('slack', [
         envGate(apiEnv, 'SLACK_BOT_TOKEN', 'secretRef'),
         envGate(apiEnv, 'SLACK_CHANNEL_IDS', 'value'),
+        envGate(apiEnv, 'SLACK_SIGNING_SECRET', 'secretRef'),
+        envGate(apiEnv, 'SLACK_EVENT_TENANT_ID', 'value'),
+        envGate(apiEnv, 'SLACK_EVENT_USER_ID', 'value'),
         envGate(workerEnv, 'SLACK_BOT_TOKEN', 'secretRef', 'worker'),
         envGate(workerEnv, 'SLACK_CHANNEL_IDS', 'value', 'worker'),
       ]),

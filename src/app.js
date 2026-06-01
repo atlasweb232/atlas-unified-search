@@ -1,4 +1,5 @@
 import cors from 'cors';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +19,12 @@ import { SearchEngine } from './store.js';
 export async function createApp(config) {
   const app = express();
   app.use(cors());
-  app.use(express.json({ limit: '4mb' }));
+  app.use(express.json({
+    limit: '4mb',
+    verify: (req, _res, buffer) => {
+      req.rawBody = buffer.toString('utf8');
+    },
+  }));
   app.use(requireApiAuth(config));
 
   const store = await createSearchStore(config);
@@ -74,6 +80,43 @@ export async function createApp(config) {
     }
   });
 
+  app.post('/v1/webhooks/slack/events', async (req, res) => {
+    const signature = verifySlackSignature(config, req);
+    if (!signature.ok) {
+      return res.status(signature.status).json({ success: false, error: signature.error });
+    }
+    if (req.body?.type === 'url_verification') {
+      return res.json({ challenge: req.body.challenge || '' });
+    }
+    const tenantId = config.slack?.eventTenantId || '';
+    const userId = config.slack?.eventUserId || '';
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'SLACK_EVENT_TENANT_ID and SLACK_EVENT_USER_ID are required for Slack events' });
+    }
+    const event = req.body?.event || {};
+    try {
+      const result = await enqueueConnectorEvent({
+        config,
+        registry,
+        store,
+        jobs,
+        source: 'slack',
+        tenantId,
+        userId,
+        event: {
+          ...event,
+          event_id: req.body?.event_id || event.event_id,
+          event_ts: req.body?.event_time ? String(req.body.event_time) : event.event_ts,
+        },
+        options: {},
+        wait: false,
+      });
+      return res.status(202).json({ success: true, job: result.job, eventTrigger: result.eventTrigger });
+    } catch (error) {
+      return res.status(error.statusCode || 400).json({ success: false, error: error.message, details: error.details || undefined });
+    }
+  });
+
   app.get('/v1/production-readiness', async (req, res) => {
     try {
       await refreshStore(store);
@@ -126,27 +169,20 @@ export async function createApp(config) {
     if (!tenantId || !userId) {
       return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
     }
-    if (!sourceAllowed(config, tenantId, userId, req.params.source)) {
-      return res.status(403).json({ success: false, error: `Source is not enabled for this user: ${req.params.source}` });
-    }
     try {
-      const eventOptions = connectorEventOptions(req.params.source, event, options);
-      await requireReadyConnector(registry, req.params.source, eventOptions);
-      await refreshStore(store);
-      store.audit({
-        eventType: 'connector_event_received',
+      const result = await enqueueConnectorEvent({
+        config,
+        registry,
+        store,
+        jobs,
+        source: req.params.source,
         tenantId,
         userId,
-        source: req.params.source,
-        metadata: eventOptions.eventTrigger,
+        event,
+        options,
+        wait,
       });
-      await store.save();
-      const job = await jobs.enqueue({ source: req.params.source, tenantId, userId, options: eventOptions, autoStart: !wait });
-      if (wait) {
-        const result = await jobs.run(job.id, { source: req.params.source, tenantId, userId, options: eventOptions });
-        return res.json({ success: true, job: result.job, indexed: result.indexed, eventTrigger: eventOptions.eventTrigger });
-      }
-      return res.status(202).json({ success: true, job, eventTrigger: eventOptions.eventTrigger });
+      return res.status(wait ? 200 : 202).json({ success: true, ...result });
     } catch (error) {
       return res.status(error.statusCode || 400).json({ success: false, error: error.message, details: error.details || undefined });
     }
@@ -320,6 +356,31 @@ async function refreshStore(store) {
   await store.refresh();
 }
 
+async function enqueueConnectorEvent({ config, registry, store, jobs, source, tenantId, userId, event = {}, options = {}, wait = false }) {
+  if (!sourceAllowed(config, tenantId, userId, source)) {
+    const error = new Error(`Source is not enabled for this user: ${source}`);
+    error.statusCode = 403;
+    throw error;
+  }
+  const eventOptions = connectorEventOptions(source, event, options);
+  await requireReadyConnector(registry, source, eventOptions);
+  await refreshStore(store);
+  store.audit({
+    eventType: 'connector_event_received',
+    tenantId,
+    userId,
+    source,
+    metadata: eventOptions.eventTrigger,
+  });
+  await store.save();
+  const job = await jobs.enqueue({ source, tenantId, userId, options: eventOptions, autoStart: !wait });
+  if (wait) {
+    const result = await jobs.run(job.id, { source, tenantId, userId, options: eventOptions });
+    return { job: result.job, indexed: result.indexed, eventTrigger: eventOptions.eventTrigger };
+  }
+  return { job, eventTrigger: eventOptions.eventTrigger };
+}
+
 async function requireReadyConnector(registry, source, options = {}) {
   if (options.fixtures) return;
   const [check] = await registry.readiness(source);
@@ -385,6 +446,27 @@ function connectorEventOptions(source, event = {}, options = {}) {
     };
   }
   return base;
+}
+
+function verifySlackSignature(config, req) {
+  const signingSecret = config.slack?.signingSecret || '';
+  if (!signingSecret) return { ok: false, status: 503, error: 'SLACK_SIGNING_SECRET is not configured' };
+  const timestamp = String(req.headers['x-slack-request-timestamp'] || '');
+  const signature = String(req.headers['x-slack-signature'] || '');
+  const timestampSeconds = Number(timestamp);
+  if (!timestamp || !Number.isFinite(timestampSeconds)) return { ok: false, status: 401, error: 'Invalid Slack timestamp' };
+  if (Math.abs(Date.now() / 1000 - timestampSeconds) > 300) return { ok: false, status: 401, error: 'Stale Slack timestamp' };
+  if (!signature.startsWith('v0=')) return { ok: false, status: 401, error: 'Invalid Slack signature' };
+  const expected = `v0=${createHmac('sha256', signingSecret).update(`v0:${timestamp}:${req.rawBody || ''}`).digest('hex')}`;
+  if (!constantTimeEquals(signature, expected)) return { ok: false, status: 401, error: 'Invalid Slack signature' };
+  return { ok: true };
+}
+
+function constantTimeEquals(left, right) {
+  const leftBuffer = Buffer.from(String(left || ''));
+  const rightBuffer = Buffer.from(String(right || ''));
+  if (leftBuffer.length !== rightBuffer.length) return false;
+  return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function eventTriggerSummary(source, event = {}) {

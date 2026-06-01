@@ -24,7 +24,18 @@ All credentials stay backend-side.
 SLACK_CHANNEL_IDS=C0123456789,C9876543210
 ```
 
-7. Validate credentials before wiring them into Azure:
+7. For near-real-time Slack Events API ingestion, copy the app signing secret
+   into backend secret storage as `SLACK_SIGNING_SECRET`, set the Slack Events
+   request URL to
+   `https://<unified-search-host>/v1/webhooks/slack/events`, and configure the
+   tenant/user scope that events feed:
+
+```bash
+SLACK_EVENT_TENANT_ID=atlasweb
+SLACK_EVENT_USER_ID=rakib.mahmood@tridentinter.io
+```
+
+8. Validate credentials before wiring them into Azure:
 
 ```bash
 export VALIDATE_CONNECTOR_SOURCES='slack'
@@ -36,7 +47,7 @@ The validator calls Slack `auth.test`, `conversations.info`, and a one-message
 `conversations.history` probe for configured channels. It does not print token
 values.
 
-8. Wire credentials into the Azure API and worker apps:
+9. Wire credentials into the Azure API and worker apps:
 
 ```bash
 export RESOURCE_GROUP='atlas-azure-backend-rg'
@@ -67,7 +78,7 @@ configured channels so an installed app without channel membership is rejected
 before Azure is updated. Dry-run mode prints the redacted Azure changes that
 would be applied without updating either Container App.
 
-9. Start a live sync:
+10. Start a live sync:
 
 ```bash
 curl -X POST "$UNIFIED_SEARCH_BASE_URL/v1/reindex/slack" \
@@ -199,10 +210,17 @@ Current production deployment supports background jobs through `/v1/sync/:source
 - tenant/user/source-scoped checkpoints
 - worker-side vectorization and assistant artifact generation
 
-Provider webhook receivers should verify provider signatures, map the provider
-payload to `{ tenantId, userId, event, options }`, and call `/v1/events/:source`
-with the unified search API token. The event endpoint does not accept fixture
-bypasses and still returns `409` until the live connector readiness gate passes.
-This lets Slack Events API, Google Drive Changes/watch, Blob Event Grid, and
-future tenant onboarding services feed Service Bus near real time without
+Slack Events API can call `/v1/webhooks/slack/events` directly. The endpoint
+bypasses the unified search bearer token only for Slack, verifies
+`X-Slack-Signature` with `SLACK_SIGNING_SECRET`, rejects stale timestamps, maps
+the payload to `SLACK_EVENT_TENANT_ID` / `SLACK_EVENT_USER_ID`, and then uses the
+same readiness-gated event enqueue path internally. It still returns `409` until
+`SLACK_BOT_TOKEN` and `SLACK_CHANNEL_IDS` pass live readiness.
+
+Other provider webhook receivers should verify provider signatures, map the
+provider payload to `{ tenantId, userId, event, options }`, and call
+`/v1/events/:source` with the unified search API token. The event endpoint does
+not accept fixture bypasses and still returns `409` until the live connector
+readiness gate passes. This lets Google Drive Changes/watch, Blob Event Grid,
+and future tenant onboarding services feed Service Bus near real time without
 exposing connector secrets to browsers.

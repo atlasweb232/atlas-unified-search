@@ -78,6 +78,9 @@ export function loadConfig() {
       botToken: process.env.SLACK_BOT_TOKEN || '',
       channelIds: list('SLACK_CHANNEL_IDS'),
       limit: number('SLACK_SYNC_LIMIT', 50),
+      signingSecret: process.env.SLACK_SIGNING_SECRET || '',
+      eventTenantId: process.env.SLACK_EVENT_TENANT_ID || '',
+      eventUserId: process.env.SLACK_EVENT_USER_ID || '',
     },
     gdrive: {
       clientId: process.env.GOOGLE_CLIENT_ID || '',

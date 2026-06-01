@@ -17,6 +17,7 @@ const apps = [
 
 const secretInputs = [
   ['SLACK_BOT_TOKEN', 'slack-bot-token'],
+  ['SLACK_SIGNING_SECRET', 'slack-signing-secret'],
   ['GOOGLE_CLIENT_ID', 'google-client-id'],
   ['GOOGLE_CLIENT_SECRET', 'google-client-secret'],
   ['GOOGLE_REFRESH_TOKEN', 'google-refresh-token'],
@@ -26,6 +27,8 @@ const secretInputs = [
 
 const valueInputs = [
   'SLACK_CHANNEL_IDS',
+  'SLACK_EVENT_TENANT_ID',
+  'SLACK_EVENT_USER_ID',
   'GDRIVE_FOLDER_IDS',
   'DATA_FABRIC_BASE_URL',
   'DATA_FABRIC_READINESS_PATH',

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -21,7 +22,7 @@ function config(dataDir) {
     postgres: { connectionString: '', ssl: false },
     serviceBus: { connectionString: '', syncQueueName: 'unified-search-sync' },
     artifacts: { azureStorageConnectionString: '', container: 'unified-search-artifacts', publicBaseUrl: '' },
-    slack: { botToken: '', channelIds: [], limit: 10 },
+    slack: { botToken: '', channelIds: [], limit: 10, signingSecret: '', eventTenantId: '', eventUserId: '' },
     gdrive: { clientId: '', clientSecret: '', refreshToken: '', serviceAccountJson: '', folderIds: [], limit: 10 },
     email: { baseUrl: '', sessionId: '', limit: 10 },
     conference: { azureStorageConnectionString: '', containers: [] },
@@ -467,6 +468,128 @@ test('connector events enqueue scoped sync jobs and keep live auth gates', async
   }
 });
 
+test('slack events webhook verifies signatures and uses readiness-gated scoped enqueue', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-slack-webhook-'));
+  let server;
+  const originalFetch = globalThis.fetch;
+  try {
+    const signingSecret = 'slack-signing-secret';
+    const app = await createApp({
+      ...config(dir),
+      auth: { required: true, token: 'api-token' },
+      slack: {
+        botToken: '',
+        channelIds: [],
+        limit: 10,
+        signingSecret,
+        eventTenantId: 'atlasweb',
+        eventUserId: 'rakib',
+      },
+    });
+    server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+
+    const unauthenticatedConnector = await fetch(`${base}/v1/connectors`);
+    assert.equal(unauthenticatedConnector.status, 401);
+
+    const unsigned = await fetch(`${base}/v1/webhooks/slack/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'url_verification', challenge: 'challenge-code' }),
+    });
+    assert.equal(unsigned.status, 401);
+
+    const challengeBody = JSON.stringify({ type: 'url_verification', challenge: 'challenge-code' });
+    const challenge = await fetch(`${base}/v1/webhooks/slack/events`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...slackSignatureHeaders(signingSecret, challengeBody),
+      },
+      body: challengeBody,
+    });
+    assert.equal(challenge.status, 200);
+    assert.deepEqual(await challenge.json(), { challenge: 'challenge-code' });
+
+    const eventBody = JSON.stringify({
+      type: 'event_callback',
+      event_id: 'Ev1',
+      event_time: 1780278000,
+      event: { type: 'message', channel: 'C1', ts: '1780278000.000100', text: 'hello' },
+    });
+    const blocked = await fetch(`${base}/v1/webhooks/slack/events`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...slackSignatureHeaders(signingSecret, eventBody),
+      },
+      body: eventBody,
+    });
+    assert.equal(blocked.status, 409);
+    const blockedBody = await blocked.json();
+    assert.equal(blockedBody.details.source, 'slack');
+    assert.ok(blockedBody.details.missing.includes('SLACK_BOT_TOKEN'));
+
+    globalThis.fetch = async (url, options) => {
+      if (String(url).startsWith('https://slack.com/api/auth.test')) {
+        return jsonResponse({ ok: true, team: 'Atlas', user_id: 'Ubot' });
+      }
+      if (String(url).startsWith('https://slack.com/api/conversations.info')) {
+        return jsonResponse({ ok: true, channel: { id: 'C1', name: 'engineering' } });
+      }
+      return originalFetch(url, options);
+    };
+
+    const liveApp = await createApp({
+      ...config(dir),
+      auth: { required: true, token: 'api-token' },
+      slack: {
+        botToken: 'xoxb-test',
+        channelIds: ['C1'],
+        limit: 10,
+        signingSecret,
+        eventTenantId: 'atlasweb',
+        eventUserId: 'rakib',
+      },
+    });
+    const liveServer = liveApp.listen(0);
+    await new Promise((resolve) => liveServer.once('listening', resolve));
+    try {
+      const liveBase = `http://127.0.0.1:${liveServer.address().port}`;
+      const accepted = await fetch(`${liveBase}/v1/webhooks/slack/events`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...slackSignatureHeaders(signingSecret, eventBody),
+        },
+        body: eventBody,
+      });
+      assert.equal(accepted.status, 202);
+      const acceptedBody = await accepted.json();
+      assert.equal(acceptedBody.success, true);
+      assert.equal(acceptedBody.eventTrigger.eventId, 'Ev1');
+      assert.equal(acceptedBody.eventTrigger.channelId, 'C1');
+      assert.equal(acceptedBody.job.tenantId, 'atlasweb');
+      assert.equal(acceptedBody.job.userId, 'rakib');
+
+      const audit = await fetch(`${liveBase}/v1/audit?tenantId=atlasweb&userId=rakib&eventType=connector_event_received`, {
+        headers: { Authorization: 'Bearer api-token' },
+      }).then((response) => response.json());
+      assert.equal(audit.events.length, 1);
+      assert.equal(audit.events[0].source, 'slack');
+      assert.equal(audit.events[0].metadata.eventId, 'Ev1');
+    } finally {
+      await new Promise((resolve) => liveServer.close(resolve));
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
 test('reindex keeps existing source data when live connector readiness fails', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-reindex-gate-'));
   let server;
@@ -682,5 +805,22 @@ function listen(handler) {
   return new Promise((resolve) => {
     const server = createServer(handler);
     server.listen(0, () => resolve(server));
+  });
+}
+
+function slackSignatureHeaders(signingSecret, body, timestamp = Math.floor(Date.now() / 1000)) {
+  const signature = createHmac('sha256', signingSecret)
+    .update(`v0:${timestamp}:${body}`)
+    .digest('hex');
+  return {
+    'X-Slack-Request-Timestamp': String(timestamp),
+    'X-Slack-Signature': `v0=${signature}`,
+  };
+}
+
+function jsonResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
   });
 }

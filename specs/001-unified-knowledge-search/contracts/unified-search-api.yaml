@@ -114,6 +114,26 @@ paths:
           description: Event accepted and sync queued
         "409":
           description: Connector is not ready for live event ingestion
+  /v1/webhooks/slack/events:
+    post:
+      summary: Accept verified Slack Events API callbacks
+      description: >
+        Public Slack Events API ingress. This endpoint bypasses Atlas bearer
+        auth only after verifying X-Slack-Signature with SLACK_SIGNING_SECRET
+        and a fresh X-Slack-Request-Timestamp. URL verification returns the
+        Slack challenge. Event callbacks are mapped to SLACK_EVENT_TENANT_ID and
+        SLACK_EVENT_USER_ID, then use the same source permission, readiness,
+        audit, and queue path as /v1/events/slack. It never accepts fixture
+        payloads and returns 409 until Slack live readiness passes.
+      responses:
+        "200":
+          description: Slack URL verification challenge accepted
+        "202":
+          description: Signed Slack event accepted and sync queued
+        "401":
+          description: Missing, invalid, or stale Slack signature
+        "409":
+          description: Slack connector is not ready for live event ingestion
   /v1/reindex/{source}:
     post:
       summary: Delete scoped source data, reset source checkpoints, and start a full source sync
