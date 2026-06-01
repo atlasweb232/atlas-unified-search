@@ -9,6 +9,9 @@ const baseUrl = process.env.UNIFIED_SEARCH_BASE_URL || '';
 const token = process.env.UNIFIED_SEARCH_AUTH_TOKEN || '';
 const validateFirst = truthy(process.env.WIRE_CONNECTORS_VALIDATE_FIRST);
 const dryRun = truthy(process.env.WIRE_CONNECTORS_DRY_RUN);
+const keyVaultName = process.env.CONNECTOR_KEYVAULT_NAME || process.env.KEYVAULT_NAME || '';
+const keyVaultIdentity = process.env.CONNECTOR_KEYVAULT_IDENTITY || 'system';
+const useKeyVaultRefs = truthy(process.env.WIRE_CONNECTORS_USE_KEYVAULT_REFS);
 
 const apps = [
   { role: 'api', name: apiApp },
@@ -47,6 +50,11 @@ const valueInputs = [
 
 const configured = [];
 const plannedCommands = [];
+const keyVaultSecrets = new Map();
+
+if (keyVaultName) {
+  hydrateSecretsFromKeyVault();
+}
 
 if (validateFirst) {
   const validation = await validateConfiguredSources();
@@ -62,8 +70,13 @@ if (validateFirst) {
 
 for (const app of apps) {
   const secrets = secretInputs
-    .filter(([envName]) => has(envName))
-    .map(([envName, secretName]) => `${secretName}=${process.env[envName]}`);
+    .filter(([envName, secretName]) => has(envName) || hasKeyVaultSecret(secretName))
+    .map(([envName, secretName]) => {
+      if (useKeyVaultRefs && hasKeyVaultSecret(secretName)) {
+        return `${secretName}=keyvaultref:${keyVaultSecretUrl(secretName)},identityref:${keyVaultIdentity}`;
+      }
+      return `${secretName}=${process.env[envName]}`;
+    });
 
   if (secrets.length) {
     az(app, [
@@ -112,6 +125,16 @@ for (const app of apps) {
 const report = {
   resourceGroup,
   dryRun,
+  keyVault: keyVaultName
+    ? {
+        name: keyVaultName,
+        refsEnabled: useKeyVaultRefs,
+        identity: useKeyVaultRefs ? keyVaultIdentity : undefined,
+        hydratedSecrets: secretInputs
+          .filter(([, secretName]) => hasKeyVaultSecret(secretName))
+          .map(([, secretName]) => secretName),
+      }
+    : undefined,
   configured,
   plannedCommands,
   nextChecks: [
@@ -131,6 +154,10 @@ function has(name) {
   return typeof process.env[name] === 'string' && process.env[name].trim() !== '';
 }
 
+function hasKeyVaultSecret(secretName) {
+  return keyVaultSecrets.has(secretName);
+}
+
 function truthy(value) {
   return ['1', 'true', 'yes'].includes(String(value || '').toLowerCase());
 }
@@ -140,6 +167,43 @@ function az(app, args) {
   plannedCommands.push({ role: app.role, app: app.name, args: redactedArgs });
   if (dryRun) return;
   execFileSync('az', args, { stdio: ['ignore', 'ignore', 'inherit'] });
+}
+
+function hydrateSecretsFromKeyVault() {
+  for (const [envName, secretName] of secretInputs) {
+    if (has(envName) && !useKeyVaultRefs) continue;
+    const value = readKeyVaultSecret(secretName);
+    if (!value) continue;
+    if (!has(envName)) process.env[envName] = value;
+    keyVaultSecrets.set(secretName, true);
+  }
+}
+
+function readKeyVaultSecret(secretName) {
+  try {
+    return execFileSync('az', [
+      'keyvault',
+      'secret',
+      'show',
+      '--vault-name',
+      keyVaultName,
+      '--name',
+      secretName,
+      '--query',
+      'value',
+      '-o',
+      'tsv',
+    ], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+function keyVaultSecretUrl(secretName) {
+  return `https://${keyVaultName}.vault.azure.net/secrets/${secretName}`;
 }
 
 function redactCommandArg(arg) {

@@ -42,3 +42,27 @@ test('google drive watch renewal dry-run prints new wireable metadata without re
   assert.ok(report.wireEnv.GDRIVE_WATCH_EXPIRATION);
   assert.ok(report.next.some((item) => item.includes('audit:production-config')));
 });
+
+test('connector key vault store dry-run redacts secret values', async () => {
+  const { stdout } = await execFileAsync('node', ['scripts/store-connector-keyvault-secrets.mjs'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      CONNECTOR_KEYVAULT_NAME: 'kv-test',
+      CONNECTOR_KEYVAULT_DRY_RUN: 'true',
+      SLACK_BOT_TOKEN: 'xoxb-secret-value',
+      GOOGLE_REFRESH_TOKEN: 'google-refresh-secret',
+    },
+  });
+
+  assert.doesNotMatch(stdout, /xoxb-secret-value|google-refresh-secret/);
+  const report = JSON.parse(stdout);
+  assert.equal(report.ok, true);
+  assert.equal(report.dryRun, true);
+  assert.equal(report.keyVaultName, 'kv-test');
+  assert.deepEqual(report.configured.map((item) => item.secretName), [
+    'slack-bot-token',
+    'google-refresh-token',
+  ]);
+  assert.ok(report.plannedCommands.every((args) => args.includes('[REDACTED]')));
+});

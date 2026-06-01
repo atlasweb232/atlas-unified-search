@@ -61,6 +61,13 @@ STATUS_REQUIRE_WEBHOOK_INGRESS=slack_events,google_drive_changes,azure_blob_even
 UNIFIED_SEARCH_SMOKE_MODE=async UNIFIED_SEARCH_SMOKE_REQUIRE_LIVE_SOURCES=slack,google_drive npm run smoke:production
 ```
 
+If connector secrets are stored in Azure Key Vault, set
+`CONNECTOR_KEYVAULT_NAME` before running the wiring helper. Set
+`WIRE_CONNECTORS_USE_KEYVAULT_REFS=true` only after the target Container Apps
+have a managed identity with Key Vault `secrets/get` access.
+Use `npm run keyvault:store-connectors` to store newly collected Slack/GDrive
+secret values in Key Vault without printing them in the command report.
+
 Google Drive watch channels expire. After the first `npm run gdrive:create-watch`,
 schedule `npm run gdrive:renew-watch` before `GDRIVE_WATCH_EXPIRATION`, then wire
 the new watch values and rerun the audit/status commands above.

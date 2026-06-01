@@ -89,6 +89,50 @@ unset WIRE_CONNECTORS_DRY_RUN
 npm run wire:production-connectors
 ```
 
+If credentials are already stored in Azure Key Vault, the wiring helper can
+hydrate local validation from Key Vault without printing secret values:
+
+```bash
+export CONNECTOR_KEYVAULT_NAME='kv-atlas-webmail-dev'
+export WIRE_CONNECTORS_VALIDATE_FIRST=true
+export WIRE_CONNECTORS_DRY_RUN=true
+npm run wire:production-connectors
+```
+
+To store newly collected connector secrets in Key Vault first:
+
+```bash
+export CONNECTOR_KEYVAULT_NAME='kv-atlas-webmail-dev'
+export SLACK_BOT_TOKEN='xoxb-...'
+export SLACK_SIGNING_SECRET='...'
+export GOOGLE_CLIENT_ID='...'
+export GOOGLE_CLIENT_SECRET='...'
+export GOOGLE_REFRESH_TOKEN='...'
+export GDRIVE_WEBHOOK_TOKEN='...'
+export CONNECTOR_KEYVAULT_DRY_RUN=true
+npm run keyvault:store-connectors
+
+unset CONNECTOR_KEYVAULT_DRY_RUN
+npm run keyvault:store-connectors
+```
+
+For Container App secrets backed directly by Key Vault references, first ensure
+the API and worker Container Apps have the configured managed identity and Key
+Vault `secrets/get` permission, then enable references:
+
+```bash
+export CONNECTOR_KEYVAULT_NAME='kv-atlas-webmail-dev'
+export CONNECTOR_KEYVAULT_IDENTITY=system
+export WIRE_CONNECTORS_USE_KEYVAULT_REFS=true
+export WIRE_CONNECTORS_VALIDATE_FIRST=true
+npm run wire:production-connectors
+```
+
+The expected Key Vault secret names match the Container App secret names:
+`slack-bot-token`, `slack-signing-secret`, `google-client-id`,
+`google-client-secret`, `google-refresh-token`, `google-service-account-json`,
+and `gdrive-webhook-token`.
+
 Strict preflight validates the connector from the local environment before
 touching Azure Container Apps. It fails closed if Slack channel access, Google
 Drive auth, provider webhook mappings, or Data Fabric readiness cannot be
@@ -293,6 +337,11 @@ npm run wire:production-connectors
 unset WIRE_CONNECTORS_DRY_RUN
 npm run wire:production-connectors
 ```
+
+The same Key Vault mode described in the Slack section works for Google Drive:
+store `google-client-id`, `google-client-secret`, `google-refresh-token`, or
+`google-service-account-json` in the vault, set `CONNECTOR_KEYVAULT_NAME`, and
+run the strict preflight before updating Container Apps.
 
 Strict preflight validates Google Drive auth and a `files.list` read before
 Azure Container Apps are updated. It also requires the watch-channel output
