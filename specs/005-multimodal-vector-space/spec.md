@@ -84,11 +84,14 @@ and the visual layer of conference video search.
   - `text` — for all text-derived embeddings (document body, transcript
     segments, extracted attachment text). Dimension = `TEXT_EMBEDDING_DIM`
     = **768**, the ecosystem-common scheme: `BAAI/bge-base-en-v1.5` served by
-    the **shared Cloud Run GPU embedding service** the Atlas email system
-    already uses (`atlasweb-mini/.../emailVectorizationService`). This makes
-    unified-search text vectors **comparable to federated email results**
-    (which use the same model). Must satisfy `002 M2`. BGE query/passage
-    instruction prefixes + L2 normalization MUST match the email service.
+    the Atlas email system's **BGE embedding service** — `atlasweb-mini/
+    microservices/email-assistant/backend/embeddingService` (FastAPI + ONNX,
+    deployable next to the other Azure Container Apps; also exposed via a GPU
+    client). Email itself stays **federated over its Elasticsearch** vector
+    store, so unified-search vectors are **comparable to federated email
+    results** (same model). Must satisfy `002 M2`. BGE retrieval instruction
+    prefix + **L2 normalization** MUST match the email service exactly
+    (confirmed in `bge_encoder.py`: 768 dims, `normalize(p=2)`, query prefix).
   - `vision` — for image-derived embeddings (document page thumbnails, video
     keyframes, slide captures). Dimension = `VISION_EMBEDDING_DIM`
     (default 512 for CLIP ViT-B/32).
