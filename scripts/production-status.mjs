@@ -7,6 +7,8 @@ const schedulerAppName = process.env.SCHEDULER_APP_NAME || 'atlas-unified-search
 const serviceBusNamespace = process.env.SERVICE_BUS_NAMESPACE || 'atlas-reg-sb-2ba6c25e';
 const serviceBusQueue = process.env.SERVICE_BUS_SYNC_QUEUE_NAME || 'unified-search-sync';
 const authToken = process.env.UNIFIED_SEARCH_AUTH_TOKEN || '';
+const allowNotTestable = truthy(process.env.STATUS_ALLOW_NOT_TESTABLE);
+const requireComplete = truthy(process.env.STATUS_REQUIRE_COMPLETE);
 
 const apiApp = loadContainerApp(apiAppName);
 const workerApp = loadContainerApp(workerAppName);
@@ -37,6 +39,7 @@ const report = {
 
 report.summary = summarizeReadiness(report);
 console.log(JSON.stringify(report, null, 2));
+enforceStatus(report.summary);
 
 function loadContainerApp(name, { optional = false } = {}) {
   try {
@@ -172,4 +175,21 @@ function summarizeReadiness(status) {
     credentialBlocked: runtime.credentialBlockedSources || [],
     futureSources: runtime.futureSources || [],
   };
+}
+
+function enforceStatus(summary) {
+  if (allowNotTestable) return;
+  if (!summary.productionTestable) {
+    console.error('Production status failed: deployment is not production-testable.');
+    process.exitCode = 1;
+    return;
+  }
+  if (requireComplete && !summary.productionComplete) {
+    console.error('Production status failed: deployment is production-testable but not production-complete.');
+    process.exitCode = 1;
+  }
+}
+
+function truthy(value) {
+  return ['1', 'true', 'yes'].includes(String(value || '').toLowerCase());
 }

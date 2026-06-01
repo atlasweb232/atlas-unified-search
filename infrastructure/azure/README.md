@@ -163,6 +163,10 @@ Use `status:production` for the quick go/no-go view: current API/worker image
 revisions, Service Bus queue depth, public health boundary, connector readiness,
 scoped index status, and remaining credential blockers. Use
 `audit:production-config` when you need the full env-gate inventory.
+`status:production` exits non-zero when the deployment is not production-testable.
+Set `STATUS_ALLOW_NOT_TESTABLE=true` for report-only use, or
+`STATUS_REQUIRE_COMPLETE=true` when Slack, Google Drive, and Data Fabric are
+expected to be fully live.
 
 Wire Slack, Google Drive, or Data Fabric credentials after the apps are already
 deployed:
