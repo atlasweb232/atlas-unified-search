@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, ChevronDown, ChevronRight, FileDown, Loader2, RefreshCw, RotateCcw, Search, Send, Sparkles, Trash2 } from 'lucide-react';
 import { apiRequest, sourceMeta } from './api.js';
 
@@ -8,7 +8,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
   const [connectors, setConnectors] = useState([]);
   const [readiness, setReadiness] = useState([]);
   const [setup, setSetup] = useState([]);
-  const [selectedSources, setSelectedSources] = useState(new Set(DEFAULT_SOURCES));
+  const [selectedSources, setSelectedSources] = useState(new Set());
   const [query, setQuery] = useState('');
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('atlas_unified_search_auth_token') || '');
   const [run, setRun] = useState(null);
@@ -19,6 +19,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
   const [assistantJobs, setAssistantJobs] = useState([]);
   const [state, setState] = useState({ loading: false, error: '' });
   const [maintenance, setMaintenance] = useState({ source: '', busy: false, message: '' });
+  const initializedSourceSelection = useRef(false);
 
   useEffect(() => {
     loadConnectors();
@@ -33,8 +34,17 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
         apiRequest(apiBaseUrl, '/v1/connectors/setup', { authToken }).catch(() => ({ setup: [] })),
       ]);
       setConnectors(connectorData.connectors || []);
-      setReadiness(readinessData.checks || []);
+      const checks = readinessData.checks || [];
+      setReadiness(checks);
       setSetup(setupData.setup || []);
+      setSelectedSources((current) => {
+        const readySources = new Set(checks.filter((check) => check.ready).map((check) => check.source));
+        if (!initializedSourceSelection.current) {
+          initializedSourceSelection.current = true;
+          return readySources;
+        }
+        return new Set([...current].filter((source) => readySources.has(source)));
+      });
     } catch (error) {
       setState((current) => ({ ...current, error: error.message }));
     }
@@ -100,6 +110,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
   }
 
   function toggleSource(source) {
+    if (!canSelectSource(readinessBySource[source])) return;
     setSelectedSources((current) => {
       const next = new Set(current);
       if (next.has(source)) next.delete(source);
@@ -202,10 +213,18 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
             const setupGuide = setupBySource[source];
             const status = sourceStatuses[source];
             const liveBlocked = isLiveCredentialBlocked(source, check);
+            const selectable = canSelectSource(check);
             return (
               <div key={source} data-testid={`connector-${source}`} className={`connector-card ${check?.ready ? 'ready' : ''} ${liveBlocked ? 'blocked' : ''}`}>
                 <label className="connector-row">
-                  <input data-testid={`source-toggle-${source}`} type="checkbox" checked={selectedSources.has(source)} onChange={() => toggleSource(source)} />
+                  <input
+                    data-testid={`source-toggle-${source}`}
+                    type="checkbox"
+                    checked={selectable && selectedSources.has(source)}
+                    onChange={() => toggleSource(source)}
+                    disabled={!selectable}
+                    title={selectable ? 'Include this source in search' : 'Source is unavailable until readiness passes'}
+                  />
                   <span className="source-icon">{sourceMeta[source]?.icon || 'SRC'}</span>
                   <span className="connector-main">
                     <strong>{sourceMeta[source]?.label || source}</strong>
@@ -237,7 +256,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
                   <p className="setup-hint">{setupGuide.nextAction}</p>
                 )}
                 {liveBlocked && (
-                  <p className="setup-hint auth-boundary">Search can only use previously indexed data for this source until live authentication passes readiness.</p>
+                  <p className="setup-hint auth-boundary">This source is unavailable for search, sync, and reindex until live authentication passes readiness.</p>
                 )}
                 {setupGuide?.ready && setupGuide.vectorizationBoundary && (
                   <p className="setup-hint">{setupGuide.vectorizationBoundary}</p>
@@ -368,6 +387,10 @@ function connectorStatusLabel(source, check, connector, status) {
   if (runStatus) return runStatus;
   if (isLiveCredentialBlocked(source, check)) return 'not authenticated';
   return check?.status || (connector?.configured ? 'configured' : 'not configured');
+}
+
+function canSelectSource(check) {
+  return Boolean(check?.ready);
 }
 
 function isLiveCredentialBlocked(source, check) {

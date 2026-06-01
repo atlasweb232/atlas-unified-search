@@ -29,11 +29,15 @@ try {
   await expectText(page, '[data-testid="connector-slack"]', 'SLACK_BOT_TOKEN');
   await expectText(page, '[data-testid="connector-slack"]', 'not authenticated');
   await expectText(page, '[data-testid="connector-google_drive"]', 'not authenticated');
-  await expectText(page, '[data-testid="connector-google_drive"]', 'live authentication passes readiness');
+  await expectText(page, '[data-testid="connector-google_drive"]', 'unavailable for search');
+  assert(await page.getByTestId('source-toggle-slack').isDisabled(), 'Slack source must be disabled until live auth readiness passes');
+  assert(await page.getByTestId('source-toggle-google_drive').isDisabled(), 'Google Drive source must be disabled until live auth readiness passes');
+  assert(!(await page.getByTestId('source-toggle-slack').isChecked()), 'Slack source must not be selected before live auth readiness passes');
+  assert(!(await page.getByTestId('source-toggle-google_drive').isChecked()), 'Google Drive source must not be selected before live auth readiness passes');
 
   for (const source of ['slack', 'google_drive', 'conference_bridge', 'knowledge_base', 'data_fabric']) {
     const toggle = page.getByTestId(`source-toggle-${source}`);
-    if (await toggle.isChecked()) await toggle.click();
+    if (!(await toggle.isDisabled()) && await toggle.isChecked()) await toggle.click();
   }
   await page.getByTestId('search-input').fill(process.env.UNIFIED_SEARCH_SMOKE_EMAIL_QUERY || 'readiness');
   await page.getByTestId('search-submit').click();
@@ -58,7 +62,7 @@ try {
       'token entry authenticated connector loading',
       'email federated vector badge visible',
       'local-index connector badges visible',
-      'blocked Slack/GDrive authentication requirements visible',
+      'blocked Slack/GDrive authentication requirements visible and disabled',
       'email-only UI search returned results',
       'result expansion clicked',
       'assistant summarize action completed',
