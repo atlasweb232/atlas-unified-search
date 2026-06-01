@@ -28,7 +28,7 @@ export async function createApp(config) {
   const registry = createConnectorRegistry(config);
   const queue = createJobQueue(config);
   const jobs = new JobRunner({ registry, store, searchEngine, queue });
-  const searchRuns = new SearchRunCoordinator({ store, searchEngine, registry });
+  const searchRuns = new SearchRunCoordinator({ store, searchEngine, registry, sourceTimeoutMs: config.searchRun?.sourceTimeoutMs });
   const assistant = new AssistantActionService({
     store,
     chatProvider: createChatProvider(config),

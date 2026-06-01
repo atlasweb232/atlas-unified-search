@@ -1,10 +1,11 @@
 import { sourceIcon, sourceLabel } from './model.js';
 
 export class SearchRunCoordinator {
-  constructor({ store, searchEngine, registry }) {
+  constructor({ store, searchEngine, registry, sourceTimeoutMs = 30000 }) {
     this.store = store;
     this.searchEngine = searchEngine;
     this.registry = registry;
+    this.sourceTimeoutMs = sourceTimeoutMs;
   }
 
   async start({ tenantId, userId, query, sources, filters = {}, limit = 10, wait = false }) {
@@ -28,10 +29,16 @@ export class SearchRunCoordinator {
     const settled = await Promise.allSettled(selectedSources.map(async (source) => {
       this.store.updateSourceStatus(runId, source, { status: 'running', startedAt: new Date().toISOString() });
       const connector = this.registry?.get(source);
-      const federatedResults = connector?.search
-        ? await connector.search({ tenantId, userId, query, filters, limit })
-        : null;
-      const results = federatedResults || await this.searchEngine.search({ tenantId, userId, query, sources: [source], filters, limit });
+      const results = await withTimeout(
+        source,
+        this.sourceTimeoutMs,
+        async () => {
+          const federatedResults = connector?.search
+            ? await connector.search({ tenantId, userId, query, filters, limit })
+            : null;
+          return federatedResults || await this.searchEngine.search({ tenantId, userId, query, sources: [source], filters, limit });
+        },
+      );
       const lineItems = results.map((result) => normalizeLineItem(runId, result));
       this.store.updateSourceStatus(runId, source, { status: 'completed', completedAt: new Date().toISOString(), resultCount: lineItems.length });
       return lineItems;
@@ -119,4 +126,20 @@ function hashQuery(query) {
   let hash = 0;
   for (const char of String(query || '')) hash = Math.imul(31, hash) + char.charCodeAt(0) | 0;
   return `q_${Math.abs(hash)}`;
+}
+
+async function withTimeout(source, timeoutMs, callback) {
+  const timeout = Number(timeoutMs);
+  if (!Number.isFinite(timeout) || timeout <= 0) return callback();
+  let timer;
+  try {
+    return await Promise.race([
+      callback(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Source agent ${source} timed out after ${timeout}ms`)), timeout);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

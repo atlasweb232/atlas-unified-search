@@ -52,6 +52,9 @@ export function loadConfig() {
       token: authToken,
     },
     sourcePermissions: json('UNIFIED_SEARCH_SOURCE_PERMISSIONS', {}),
+    searchRun: {
+      sourceTimeoutMs: number('UNIFIED_SEARCH_SOURCE_TIMEOUT_MS', 30000),
+    },
     syncSchedulesRaw: process.env.UNIFIED_SEARCH_SYNC_SCHEDULES || '',
     schedulerRequired: ['1', 'true', 'yes'].includes(String(process.env.UNIFIED_SEARCH_SCHEDULER_REQUIRED || '').toLowerCase()),
     postgres: {

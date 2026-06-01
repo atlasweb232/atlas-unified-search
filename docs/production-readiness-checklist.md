@@ -21,6 +21,7 @@ The unified search service is production-testable when these gates are true:
 - Tenant/user IDs are supplied on every sync, search, search-run, document, and assistant action request.
 - Cross-tenant reads are rejected by API tests and manual smoke tests.
 - Scoped deletion and `/v1/reindex/{source}` are available for tenant/user/source resets without deleting other users' data.
+- `UNIFIED_SEARCH_SOURCE_TIMEOUT_MS` is configured or defaults to 30000ms so a hung federated source-agent produces a partial search run instead of blocking the whole query.
 - Slack and Google Drive syncs persist tenant/user-scoped checkpoints; use `forceFullSync` or `/v1/reindex/{source}` to intentionally rescan.
 - Optional `UNIFIED_SEARCH_SOURCE_PERMISSIONS` can restrict usable sources per `tenantId:userId`.
 - `npm run smoke:production` passes with `UNIFIED_SEARCH_SMOKE_MODE=inline`.

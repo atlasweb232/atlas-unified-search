@@ -5,6 +5,8 @@ import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../src/app.js';
+import { SearchRunCoordinator } from '../src/searchRun.js';
+import { JsonSearchStore } from '../src/store.js';
 
 function config(dataDir) {
   return {
@@ -73,6 +75,58 @@ test('api auth boundary blocks protected endpoints when enabled', async () => {
     assert.ok(slack.liveSmoke.env.includes('UNIFIED_SEARCH_SMOKE_SLACK_CHANNEL_IDS'));
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
+test('search run source-agent timeout returns partial results', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-timeout-'));
+  try {
+    const store = new JsonSearchStore({ dataDir: dir });
+    await store.load();
+    const searchEngine = {
+      async search({ sources }) {
+        return [{
+          id: `doc-${sources[0]}`,
+          tenantId: 'atlasweb',
+          userId: 'rakib',
+          source: sources[0],
+          title: 'Fast result',
+          summary: 'Fast source completed',
+          body: 'Fast source completed',
+          score: 0.9,
+          metadata: {},
+          children: [],
+        }];
+      },
+    };
+    const registry = {
+      get(source) {
+        if (source === 'slow') {
+          return { search: () => new Promise(() => {}) };
+        }
+        return {};
+      },
+    };
+    const coordinator = new SearchRunCoordinator({ store, searchEngine, registry, sourceTimeoutMs: 20 });
+    const run = await coordinator.start({
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      query: 'timeout check',
+      sources: ['slow', 'fast'],
+      wait: true,
+      limit: 10,
+    });
+
+    assert.equal(run.status, 'partial');
+    assert.equal(run.results.length, 1);
+    assert.equal(run.results[0].source, 'fast');
+    const slow = run.sourceStatuses.find((status) => status.source === 'slow');
+    const fast = run.sourceStatuses.find((status) => status.source === 'fast');
+    assert.equal(slow.status, 'failed');
+    assert.match(slow.error, /timed out/);
+    assert.equal(fast.status, 'completed');
+  } finally {
     await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });

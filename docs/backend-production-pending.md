@@ -51,5 +51,5 @@ UNIFIED_SEARCH_SMOKE_MODE=async npm run smoke:production
 - Add Google Drive Changes/watch ingestion.
 - Add Azure Blob Event Grid ingestion for conference bridge transcripts.
 - Add SSE or WebSocket streaming for partial search-run results.
-- Add source-agent timeout and retry policy.
+- Add source-agent retry policy for transient source failures.
 - Add WorkOS/Nango token provider for multi-user connector onboarding.
