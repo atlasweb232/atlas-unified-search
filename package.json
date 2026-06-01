@@ -14,6 +14,7 @@
     "build": "vite build frontend",
     "azure:promote-image": "bash infrastructure/azure/promote-image.sh",
     "db:migrate": "node scripts/migrate-postgres.mjs",
+    "status:production": "node scripts/production-status.mjs",
     "audit:production-config": "node scripts/audit-production-config.mjs",
     "validate:connector-credentials": "node scripts/validate-connector-credentials.mjs",
     "wire:production-connectors": "node scripts/wire-production-connectors.mjs",

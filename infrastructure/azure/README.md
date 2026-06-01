@@ -155,8 +155,14 @@ Config audit without printing secret values:
 ```bash
 export UNIFIED_SEARCH_BASE_URL='https://atlas-unified-search.proudfield-a201b3fd.eastus.azurecontainerapps.io'
 export UNIFIED_SEARCH_AUTH_TOKEN='<same token wired into Container App>'
+npm run status:production
 npm run audit:production-config
 ```
+
+Use `status:production` for the quick go/no-go view: current API/worker image
+revisions, Service Bus queue depth, public health boundary, connector readiness,
+scoped index status, and remaining credential blockers. Use
+`audit:production-config` when you need the full env-gate inventory.
 
 Wire Slack, Google Drive, or Data Fabric credentials after the apps are already
 deployed:
