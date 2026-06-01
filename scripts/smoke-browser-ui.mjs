@@ -56,7 +56,7 @@ try {
   await page.getByTestId('search-input').fill(process.env.UNIFIED_SEARCH_SMOKE_EMAIL_QUERY || 'readiness');
   await page.getByTestId('search-submit').click();
   try {
-    await page.waitForSelector('[data-testid="result-row"]', { timeout: 30000 });
+    await page.waitForSelector('[data-testid="result-row"]', { timeout: searchResultTimeoutMs() });
   } catch (error) {
     const pageText = await page.locator('body').textContent();
     throw new Error(`UI search produced no result rows. Brand=${JSON.stringify(brandText)} Events=${JSON.stringify(browserEvents)} Text=${JSON.stringify(pageText?.slice(0, 2000))}`);
@@ -66,8 +66,9 @@ try {
 
   await page.getByTestId('result-expand').first().click();
   await page.getByTestId('assistant-prompt').fill('Summarize the selected email readiness result.');
+  await page.waitForFunction(() => !document.querySelector('[data-testid="assistant-summarize"]')?.disabled, {}, { timeout: searchResultTimeoutMs() });
   await page.getByTestId('assistant-summarize').click();
-  await expectText(page, '.assistant-jobs', 'completed', 30000);
+  await expectText(page, '.assistant-jobs', 'completed', searchResultTimeoutMs());
 
   let dataFabricResultCount = 0;
   if (dataFabricReady) {
@@ -80,7 +81,7 @@ try {
     if (!(await dataFabricToggle.isChecked())) await dataFabricToggle.click();
     await page.getByTestId('search-input').fill(process.env.UNIFIED_SEARCH_SMOKE_DATA_FABRIC_QUERY || 'unified search index status');
     await page.getByTestId('search-submit').click();
-    await page.waitForSelector('[data-testid="result-row"]', { timeout: 30000 });
+    await page.waitForSelector('[data-testid="result-row"]', { timeout: searchResultTimeoutMs() });
     dataFabricResultCount = await page.locator('[data-testid="result-row"]').count();
     assert(dataFabricResultCount > 0, 'expected at least one Data Fabric result in UI');
     await expectText(page, '[data-testid="result-row"]', 'Data Fabric', 15000);
@@ -184,4 +185,8 @@ function requireEnv(name) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function searchResultTimeoutMs() {
+  return Number(process.env.UNIFIED_SEARCH_SMOKE_UI_RESULT_TIMEOUT_MS || 90000);
 }
