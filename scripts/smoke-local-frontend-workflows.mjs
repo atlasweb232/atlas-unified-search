@@ -98,10 +98,10 @@ async function checkAuthBoundary() {
 }
 
 async function checkEmailFederation(emailReadiness) {
-  const before = await apiRequest('/v1/health');
-  const beforeEmailDocs = before.index?.bySource?.email || 0;
   const emailUserId = process.env.UNIFIED_SEARCH_SMOKE_EMAIL_USER_ID || emailReadiness.details?.readinessUserEmail || '';
   assert(emailUserId, 'email readiness did not expose a smoke user and UNIFIED_SEARCH_SMOKE_EMAIL_USER_ID is unset');
+  const before = await apiRequest(`/v1/index/status?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(emailUserId)}`);
+  const beforeEmailDocs = before.index?.bySource?.email || 0;
   const query = process.env.UNIFIED_SEARCH_SMOKE_EMAIL_QUERY || 'readiness';
   const run = await apiRequest('/v1/search-runs', {
     method: 'POST',
@@ -119,7 +119,7 @@ async function checkEmailFederation(emailReadiness) {
   if (requireEmailResults) {
     assert(run.results?.length, `email search returned no results for ${emailUserId}`);
   }
-  const after = await apiRequest('/v1/health');
+  const after = await apiRequest(`/v1/index/status?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(emailUserId)}`);
   const afterEmailDocs = after.index?.bySource?.email || 0;
   assert(beforeEmailDocs === afterEmailDocs, `email federation should not create unified-search email documents (${beforeEmailDocs} -> ${afterEmailDocs})`);
   report.checks.push({

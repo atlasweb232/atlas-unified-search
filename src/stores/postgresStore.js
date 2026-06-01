@@ -72,6 +72,10 @@ export class PostgresSearchStore extends JsonSearchStore {
     return { ...super.status(), backend: this.name };
   }
 
+  scopedStatus(scope) {
+    return { ...super.scopedStatus(scope), backend: this.name };
+  }
+
   async loadStateFromPostgres() {
     const [documents, chunks, checkpoints, jobs, runs, actions, artifacts, audit] = await Promise.all([
       this.pool.query('SELECT * FROM unified_documents'),

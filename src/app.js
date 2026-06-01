@@ -43,12 +43,11 @@ export async function createApp(config) {
       success: true,
       service: 'atlas-unified-search',
       embedding: { model: embedder.model, version: embedder.version },
-      index: store.status(),
+      index: publicIndexStatus(store.status()),
       auth: { required: Boolean(config.auth?.required) },
       queue: { backend: queue.name },
       schedules: scheduleStatus(config),
       artifacts: { backend: assistant.artifactProvider.name, configured: assistant.artifactProvider.configured() },
-      connectors: registry.list(),
     });
     }).catch((error) => res.status(503).json({ success: false, error: error.message }));
   });
@@ -90,6 +89,15 @@ export async function createApp(config) {
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }
+  });
+
+  app.get('/v1/index/status', async (req, res) => {
+    const { tenantId, userId } = req.query || {};
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    }
+    await refreshStore(store);
+    return res.json({ success: true, index: store.scopedStatus({ tenantId, userId }) });
   });
 
   app.post('/v1/sync/:source', async (req, res) => {
@@ -303,6 +311,13 @@ function matchesScope(req, row) {
   const tenantId = req.query.tenantId || req.headers['x-tenant-id'];
   const userId = req.query.userId || req.headers['x-user-id'];
   return Boolean(tenantId && userId && row.tenantId === tenantId && row.userId === userId);
+}
+
+function publicIndexStatus(status) {
+  return {
+    backend: status.backend,
+    ready: ['postgres-pgvector', 'json'].includes(status.backend),
+  };
 }
 
 function hashQuery(query) {

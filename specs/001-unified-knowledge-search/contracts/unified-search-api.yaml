@@ -63,6 +63,23 @@ paths:
       responses:
         "200":
           description: Connector readiness checks
+  /v1/index/status:
+    get:
+      summary: Get tenant/user-scoped index counts
+      parameters:
+        - name: tenantId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Scoped index status
   /v1/sync/{source}:
     post:
       summary: Start a source sync

@@ -192,9 +192,15 @@ test('unified search indexes fixture documents across all connector types', asyn
     assert.equal(otherUser.results.length, 0);
 
     const health = await fetch(`${base}/v1/health`).then((response) => response.json());
-    assert.equal(health.index.bySource.slack, 1);
-    assert.equal(health.index.bySource.google_drive, 1);
-    assert.equal(health.index.bySource.email, 1);
+    assert.equal(health.index.backend, 'json');
+    assert.equal(health.index.ready, true);
+    assert.equal(health.index.bySource, undefined);
+    assert.equal(health.connectors, undefined);
+
+    const indexStatus = await request(base, `/v1/index/status?tenantId=${tenantId}&userId=${userId}`);
+    assert.equal(indexStatus.index.bySource.slack, 1);
+    assert.equal(indexStatus.index.bySource.google_drive, 1);
+    assert.equal(indexStatus.index.bySource.email, 1);
 
     const readiness = await fetch(`${base}/v1/connectors/readiness`).then((response) => response.json());
     assert.equal(readiness.success, true);

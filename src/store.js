@@ -234,6 +234,23 @@ export class JsonSearchStore {
       }, {}),
     };
   }
+
+  scopedStatus({ tenantId, userId }) {
+    const documents = this.listDocuments().filter((document) => document.tenantId === tenantId && document.userId === userId);
+    const documentIds = new Set(documents.map((document) => document.id));
+    const chunks = this.listChunks().filter((chunk) => documentIds.has(chunk.documentId));
+    return {
+      backend: 'json',
+      tenantId,
+      userId,
+      documents: documents.length,
+      chunks: chunks.length,
+      bySource: documents.reduce((acc, document) => {
+        acc[document.source] = (acc[document.source] || 0) + 1;
+        return acc;
+      }, {}),
+    };
+  }
 }
 
 export function redactObject(value) {
