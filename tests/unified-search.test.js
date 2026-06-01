@@ -301,6 +301,72 @@ test('source permissions block disallowed sync and search sources', async () => 
   }
 });
 
+test('reindex keeps existing source data when live connector readiness fails', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-reindex-gate-'));
+  let server;
+  const originalFetch = globalThis.fetch;
+  try {
+    const app = await createApp({
+      ...config(dir),
+      slack: { botToken: 'xoxb-invalid', channelIds: ['C1'], limit: 10 },
+    });
+    server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+
+    await post(base, '/v1/sync/slack', {
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      wait: true,
+      options: {
+        fixtures: [{
+          channelId: 'C1',
+          channelName: 'engineering',
+          timestamp: '2026-05-31T12:00:00.000Z',
+          sender: 'Ada',
+          text: 'Do not delete this stale Slack result when auth fails.',
+        }],
+      },
+    });
+
+    globalThis.fetch = async (url, options) => {
+      if (String(url).startsWith('https://slack.com/api/')) {
+        return new Response(JSON.stringify({ ok: false, error: 'invalid_auth' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return originalFetch(url, options);
+    };
+
+    const reindex = await fetch(`${base}/v1/reindex/slack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId: 'atlasweb', userId: 'rakib', wait: false }),
+    });
+    assert.equal(reindex.status, 409);
+    const body = await reindex.json();
+    assert.equal(body.success, false);
+    assert.equal(body.details.source, 'slack');
+    assert.equal(body.details.status, 'check_failed');
+    assert.equal(body.details.error, 'invalid_auth');
+
+    const search = await post(base, '/v1/search', {
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      query: 'stale Slack result',
+      sources: ['slack'],
+    });
+    assert.equal(search.results.length, 1);
+    assert.match(search.results[0].oneLine, /Do not delete/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+});
+
 test('data fabric connector syncs live HTTP records', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-fabric-'));
   let fabricServer;

@@ -101,6 +101,7 @@ export async function createApp(config) {
       return res.status(403).json({ success: false, error: `Source is not enabled for this user: ${req.params.source}` });
     }
     try {
+      await requireReadyConnector(registry, req.params.source, options);
       const job = await jobs.enqueue({ source: req.params.source, tenantId, userId, options, autoStart: !wait });
       if (wait) {
         const result = await jobs.run(job.id, { source: req.params.source, tenantId, userId, options });
@@ -194,12 +195,13 @@ export async function createApp(config) {
     if (!sourceAllowed(config, tenantId, userId, req.params.source)) {
       return res.status(403).json({ success: false, error: `Source is not enabled for this user: ${req.params.source}` });
     }
-    await refreshStore(store);
-    const deleted = store.deleteDocuments({ tenantId, userId, source: req.params.source });
-    const checkpoints = store.deleteCheckpoints({ tenantId, userId, source: req.params.source });
-    store.audit({ eventType: 'reindex_start', tenantId, userId, source: req.params.source, metadata: { deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted } });
-    await store.save();
     try {
+      await requireReadyConnector(registry, req.params.source, options);
+      await refreshStore(store);
+      const deleted = store.deleteDocuments({ tenantId, userId, source: req.params.source });
+      const checkpoints = store.deleteCheckpoints({ tenantId, userId, source: req.params.source });
+      store.audit({ eventType: 'reindex_start', tenantId, userId, source: req.params.source, metadata: { deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted } });
+      await store.save();
       const job = await jobs.enqueue({
         source: req.params.source,
         tenantId,
@@ -213,7 +215,7 @@ export async function createApp(config) {
       }
       return res.status(202).json({ success: true, deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted, job });
     } catch (error) {
-      return res.status(400).json({ success: false, error: error.message, deleted: deleted.deleted, checkpointDeleted: checkpoints.deleted });
+      return res.status(error.statusCode || 400).json({ success: false, error: error.message, details: error.details || undefined });
     }
   });
 
@@ -263,6 +265,24 @@ async function refreshStore(store) {
     return;
   }
   await store.refresh();
+}
+
+async function requireReadyConnector(registry, source, options = {}) {
+  if (options.fixtures) return;
+  const [check] = await registry.readiness(source);
+  if (check?.ready) return;
+  const missing = (check?.requirements || [])
+    .filter((requirement) => !requirement.configured && !requirement.optional)
+    .map((requirement) => requirement.name);
+  const error = new Error(`Connector is not ready: ${source}`);
+  error.statusCode = 409;
+  error.details = {
+    source,
+    status: check?.status || 'not_reported',
+    missing,
+    error: check?.error,
+  };
+  throw error;
 }
 
 function matchesScope(req, row) {
