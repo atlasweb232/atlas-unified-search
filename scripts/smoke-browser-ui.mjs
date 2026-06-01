@@ -5,7 +5,8 @@ const token = requireEnv('UNIFIED_SEARCH_AUTH_TOKEN');
 const executablePath = process.env.CHROME_PATH || '/usr/bin/google-chrome';
 const tenantId = process.env.UNIFIED_SEARCH_SMOKE_TENANT_ID || 'atlasweb';
 const userId = process.env.UNIFIED_SEARCH_SMOKE_USER_ID || await resolveSmokeUserId();
-const dataFabricReady = await connectorReady('data_fabric');
+const readinessBySource = await connectorReadiness();
+const dataFabricReady = Boolean(readinessBySource.data_fabric?.ready);
 if (dataFabricReady) {
   await apiJson('/v1/reindex/data_fabric', {
     method: 'POST',
@@ -43,14 +44,10 @@ try {
   const brandText = await page.locator('.brand').textContent();
   await expectText(page, '[data-testid="connector-conference_bridge"]', 'Indexed here');
   await expectText(page, '[data-testid="connector-knowledge_base"]', 'Indexed here');
-  await expectText(page, '[data-testid="connector-slack"]', 'SLACK_BOT_TOKEN');
-  await expectText(page, '[data-testid="connector-slack"]', 'not authenticated');
-  await expectText(page, '[data-testid="connector-google_drive"]', 'not authenticated');
-  await expectText(page, '[data-testid="connector-google_drive"]', 'unavailable for search');
-  assert(await page.getByTestId('source-toggle-slack').isDisabled(), 'Slack source must be disabled until live auth readiness passes');
-  assert(await page.getByTestId('source-toggle-google_drive').isDisabled(), 'Google Drive source must be disabled until live auth readiness passes');
-  assert(!(await page.getByTestId('source-toggle-slack').isChecked()), 'Slack source must not be selected before live auth readiness passes');
-  assert(!(await page.getByTestId('source-toggle-google_drive').isChecked()), 'Google Drive source must not be selected before live auth readiness passes');
+  const slackReady = Boolean(readinessBySource.slack?.ready);
+  const gdriveReady = Boolean(readinessBySource.google_drive?.ready);
+  await assertConnectorToggleState(page, 'slack', slackReady, ['SLACK_BOT_TOKEN', 'not authenticated']);
+  await assertConnectorToggleState(page, 'google_drive', gdriveReady, ['not authenticated', 'unavailable for search']);
 
   for (const source of ['slack', 'google_drive', 'conference_bridge', 'knowledge_base', 'data_fabric']) {
     const toggle = page.getByTestId(`source-toggle-${source}`);
@@ -96,7 +93,8 @@ try {
       'token entry authenticated connector loading',
       'email federated vector badge visible',
       'local-index connector badges visible',
-      'blocked Slack/GDrive authentication requirements visible and disabled',
+      slackReady ? 'Slack live connector selectable' : 'Slack blocked authentication requirements visible and disabled',
+      gdriveReady ? 'Google Drive live connector selectable' : 'Google Drive blocked authentication requirements visible and disabled',
       'email-only UI search returned results',
       'result expansion clicked',
       'assistant summarize action completed',
@@ -137,9 +135,22 @@ async function resolveSmokeUserId() {
   return email?.details?.readinessUserEmail || 'user-required';
 }
 
-async function connectorReady(source) {
-  const body = await apiJson(`/v1/connectors/readiness?source=${encodeURIComponent(source)}`);
-  return Boolean(body.checks?.[0]?.ready);
+async function connectorReadiness() {
+  const body = await apiJson('/v1/connectors/readiness');
+  return Object.fromEntries((body.checks || []).map((check) => [check.source, check]));
+}
+
+async function assertConnectorToggleState(page, source, ready, blockedTexts) {
+  const toggle = page.getByTestId(`source-toggle-${source}`);
+  if (ready) {
+    assert(!(await toggle.isDisabled()), `${source} source must be selectable when live readiness passes`);
+    assert(await toggle.isChecked(), `${source} source should be selected by default when live readiness passes`);
+    await expectText(page, `[data-testid="connector-${source}"]`, 'ok');
+    return;
+  }
+  for (const text of blockedTexts) await expectText(page, `[data-testid="connector-${source}"]`, text);
+  assert(await toggle.isDisabled(), `${source} source must be disabled until live auth readiness passes`);
+  assert(!(await toggle.isChecked()), `${source} source must not be selected before live auth readiness passes`);
 }
 
 async function apiJson(path, { method = 'GET', body } = {}) {

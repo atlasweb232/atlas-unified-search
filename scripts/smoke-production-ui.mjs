@@ -46,8 +46,8 @@ if (token) {
   const production = await request('/v1/production-readiness', { token });
   assert(production.ok, `production readiness failed: ${production.status} ${JSON.stringify(production.data)}`);
   assert(production.data.report?.readyForProductionTesting === true, 'production readiness report is not ready for production testing');
-  assert(production.data.report?.credentialBlockedSources?.some((item) => item.source === 'slack'), 'production readiness should report Slack as credential-blocked');
-  assert(production.data.report?.credentialBlockedSources?.some((item) => item.source === 'google_drive'), 'production readiness should report Google Drive as credential-blocked');
+  assertCredentialBoundary(readiness.data.checks, production.data.report, 'slack');
+  assertCredentialBoundary(readiness.data.checks, production.data.report, 'google_drive');
   assert(production.data.report?.webhookIngress?.some((item) => item.name === 'slack_events'), 'production readiness should report Slack webhook ingress');
   assert(production.data.report?.webhookIngress?.some((item) => item.name === 'google_drive_changes'), 'production readiness should report Google Drive webhook ingress');
   assert(production.data.report?.webhookIngress?.some((item) => item.name === 'azure_blob_event_grid'), 'production readiness should report Azure Blob webhook ingress');
@@ -89,6 +89,16 @@ function requireEnv(name) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function assertCredentialBoundary(checks, report, source) {
+  const ready = checks.find((check) => check.source === source)?.ready === true;
+  const blocked = report?.credentialBlockedSources?.some((item) => item.source === source);
+  if (ready) {
+    assert(!blocked, `production readiness should not report ${source} as credential-blocked once readiness passes`);
+  } else {
+    assert(blocked, `production readiness should report ${source} as credential-blocked until readiness passes`);
+  }
 }
 
 function assertPublicHealthIsNonEnumerating(data) {
