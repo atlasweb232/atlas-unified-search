@@ -157,7 +157,8 @@ async function validateConfiguredSources() {
     ...(has('GOOGLE_SERVICE_ACCOUNT_JSON') || has('GOOGLE_CLIENT_ID') || has('GOOGLE_CLIENT_SECRET') || has('GOOGLE_REFRESH_TOKEN') ? ['google_drive'] : []),
     ...(has('DATA_FABRIC_BASE_URL') || has('DATA_FABRIC_API_TOKEN') ? ['data_fabric'] : []),
   ];
-  if (!sources.length) return { ok: true, sources: [] };
+  const webhookMappings = validateWebhookMappings(sources);
+  if (!sources.length) return { ok: webhookMappings.ok, sources: [], webhookMappings };
 
   const registry = createConnectorRegistry(loadConfig());
   const results = [];
@@ -180,7 +181,36 @@ async function validateConfiguredSources() {
     }
     results.push(item);
   }
-  return { ok: results.every((item) => item.ok), sources: results };
+  return { ok: results.every((item) => item.ok) && webhookMappings.ok, sources: results, webhookMappings };
+}
+
+function validateWebhookMappings(sources) {
+  const checks = [];
+  if (sources.includes('slack')) {
+    checks.push(requiredEnvGroup('slack_events', [
+      'SLACK_SIGNING_SECRET',
+      'SLACK_EVENT_TENANT_ID',
+      'SLACK_EVENT_USER_ID',
+    ]));
+  }
+  if (sources.includes('google_drive')) {
+    checks.push(requiredEnvGroup('google_drive_changes', [
+      'GDRIVE_WEBHOOK_TOKEN',
+      'GDRIVE_WEBHOOK_CHANNEL_IDS',
+      'GDRIVE_EVENT_TENANT_ID',
+      'GDRIVE_EVENT_USER_ID',
+    ]));
+  }
+  return { ok: checks.every((check) => check.ok), checks };
+}
+
+function requiredEnvGroup(name, envNames) {
+  const missing = envNames.filter((envName) => !has(envName));
+  return {
+    name,
+    ok: missing.length === 0,
+    missing,
+  };
 }
 
 async function probeConfiguredSource(source, connector) {

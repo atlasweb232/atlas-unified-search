@@ -91,12 +91,13 @@ npm run wire:production-connectors
 
 Strict preflight validates the connector from the local environment before
 touching Azure Container Apps. It fails closed if Slack channel access, Google
-Drive auth, or Data Fabric readiness cannot be proven. The failure report
-includes missing env names and provider error messages, but does not print
-secret values. For Slack, preflight also calls `conversations.history` on the
-configured channels so an installed app without channel membership is rejected
-before Azure is updated. Dry-run mode prints the redacted Azure changes that
-would be applied without updating either Container App.
+Drive auth, provider webhook mappings, or Data Fabric readiness cannot be
+proven. The failure report includes missing env names and provider error
+messages, but does not print secret values. For Slack, preflight also calls
+`conversations.history` on the configured channels so an installed app without
+channel membership is rejected before Azure is updated. Dry-run mode prints the
+redacted Azure changes that would be applied without updating either Container
+App.
 
 10. Start a live sync:
 
@@ -252,10 +253,12 @@ npm run wire:production-connectors
 ```
 
 Strict preflight validates Google Drive auth and a `files.list` read before
-Azure Container Apps are updated. If OAuth returns `invalid_client`,
-`invalid_grant`, or the Drive API cannot list files, the script exits before
-wiring the bad secret refs into production. Dry-run mode prints the redacted
-Azure changes that would be applied without updating either Container App.
+Azure Container Apps are updated. It also requires the watch-channel output
+`GDRIVE_WEBHOOK_CHANNEL_IDS` plus the webhook token and tenant/user mapping. If
+OAuth returns `invalid_client`, `invalid_grant`, the Drive API cannot list
+files, or the webhook mapping is incomplete, the script exits before wiring the
+bad secret refs into production. Dry-run mode prints the redacted Azure changes
+that would be applied without updating either Container App.
 
 9. Start a live sync:
 
