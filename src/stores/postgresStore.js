@@ -2,17 +2,36 @@ import pg from 'pg';
 import { JsonSearchStore, redactObject } from '../store.js';
 
 export class PostgresSearchStore extends JsonSearchStore {
-  constructor({ connectionString, ssl = true }) {
+  constructor({ connectionString, ssl = true, embeddingDim = 768 }) {
     super({ dataDir: '/tmp/atlas-unified-search-postgres-cache' });
     this.name = 'postgres-pgvector';
     this.pool = new pg.Pool({ connectionString, ssl });
+    this.embeddingDim = Number(embeddingDim) || 768;
     this.pendingDeletedDocumentIds = new Set();
     this.pendingDeletedCheckpointKeys = new Set();
   }
 
   async load() {
     await this.pool.query('SELECT 1');
+    await this.assertVectorColumnDim();
     await this.loadStateFromPostgres();
+  }
+
+  // Fail fast if the vector column width != configured EMBEDDING_DIM. pgvector
+  // stores the declared dimension directly in atttypmod. A mismatch here is the
+  // original silent-NULL bug surfacing as a hard startup error instead.
+  async assertVectorColumnDim() {
+    const { rows } = await this.pool.query(
+      `SELECT atttypmod AS dim FROM pg_attribute
+       WHERE attrelid = 'unified_chunks'::regclass AND attname = 'embedding'`,
+    );
+    const columnDim = rows[0]?.dim;
+    if (Number.isFinite(columnDim) && columnDim > 0 && columnDim !== this.embeddingDim) {
+      throw new Error(
+        `Vector column unified_chunks.embedding is vector(${columnDim}) but EMBEDDING_DIM=${this.embeddingDim}. `
+        + 'Run the migration that parameterizes the column to the configured width.',
+      );
+    }
   }
 
   async refresh() {
@@ -35,7 +54,7 @@ export class PostgresSearchStore extends JsonSearchStore {
         await upsertDocument(client, document);
       }
       for (const chunk of Object.values(this.state.chunks)) {
-        await upsertChunk(client, chunk);
+        await upsertChunk(client, chunk, this.embeddingDim);
       }
       for (const [key, checkpoint] of Object.entries(this.state.checkpoints)) {
         await client.query(
@@ -199,7 +218,7 @@ export class PostgresSearchStore extends JsonSearchStore {
 
 export async function createSearchStore(config) {
   if (config.postgres?.connectionString) {
-    return new PostgresSearchStore(config.postgres);
+    return new PostgresSearchStore({ ...config.postgres, embeddingDim: config.embeddingDim });
   }
   return new JsonSearchStore({ dataDir: config.dataDir });
 }
@@ -222,8 +241,8 @@ async function upsertDocument(client, document) {
   );
 }
 
-async function upsertChunk(client, chunk) {
-  const vector = Array.isArray(chunk.embedding) && chunk.embedding.length === 1536 ? `[${chunk.embedding.join(',')}]` : null;
+async function upsertChunk(client, chunk, embeddingDim = 768) {
+  const vector = Array.isArray(chunk.embedding) && chunk.embedding.length === embeddingDim ? `[${chunk.embedding.join(',')}]` : null;
   await client.query(
     `INSERT INTO unified_chunks
       (id, document_id, tenant_id, user_id, source, text, summary, embedding_model, embedding_version, embedding, embedding_json, metadata, updated_at)

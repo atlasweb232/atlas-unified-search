@@ -4,9 +4,12 @@ const SOURCE_ENV_KEYS = {
 };
 
 export class ConnectorTokenProvider {
-  constructor({ staticTokens = {}, envFallback = {} } = {}) {
+  constructor({ staticTokens = {}, envFallback = {}, dynamicResolver = null } = {}) {
     this.staticTokens = normalizeStaticTokens(staticTokens);
     this.envFallback = envFallback;
+    // Optional runtime resolver (e.g. the onboarding store): (source, scope) =>
+    // credentials. Runtime-connected credentials take precedence over static/env.
+    this.dynamicResolver = typeof dynamicResolver === 'function' ? dynamicResolver : null;
   }
 
   credentialsFor(source, { tenantId = '', userId = '' } = {}) {
@@ -15,7 +18,14 @@ export class ConnectorTokenProvider {
       || this.staticTokens[scopeKey('*', userId)]?.[source]
       || this.staticTokens['*:*']?.[source]
       || {};
-    return pruneEmpty({ ...(this.envFallback[source] || {}), ...normalizeCredentials(scoped) });
+    const dynamic = this.dynamicResolver
+      ? normalizeCredentials(this.dynamicResolver(source, { tenantId, userId }) || {})
+      : {};
+    return pruneEmpty({
+      ...(this.envFallback[source] || {}),
+      ...normalizeCredentials(scoped),
+      ...dynamic,
+    });
   }
 
   hasScopedCredentials(source, scope = {}) {
@@ -38,13 +48,14 @@ export class ConnectorTokenProvider {
   }
 }
 
-export function createConnectorTokenProvider(config) {
+export function createConnectorTokenProvider(config, { dynamicResolver = null } = {}) {
   return new ConnectorTokenProvider({
     staticTokens: config.connectorTokens || {},
     envFallback: {
       slack: config.slack,
       google_drive: config.gdrive,
     },
+    dynamicResolver,
   });
 }
 

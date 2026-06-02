@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { cosineSimilarity } from './embedding.js';
+import { cosineSimilarity, assertEmbedderDimension } from './embedding.js';
 
 const EMPTY_STATE = {
   schemaVersion: 1,
@@ -291,6 +291,25 @@ export class JsonSearchStore {
     return candidates.slice(0, candidateLimit);
   }
 
+  // Chunks whose stored embeddingVersion differs from the current embedder
+  // (model or dimension change) — candidates for re-embedding.
+  findStaleChunks(currentVersion) {
+    const stale = [];
+    for (const chunk of Object.values(this.state.chunks)) {
+      if (chunk.embeddingVersion && chunk.embeddingVersion !== currentVersion) {
+        stale.push({
+          id: chunk.id,
+          documentId: chunk.documentId,
+          source: chunk.source,
+          tenantId: chunk.tenantId,
+          userId: chunk.userId,
+          embeddingVersion: chunk.embeddingVersion,
+        });
+      }
+    }
+    return stale;
+  }
+
   status() {
     const documents = this.listDocuments();
     const chunks = this.listChunks();
@@ -359,15 +378,26 @@ function redactSecret(value) {
 }
 
 export class SearchEngine {
-  constructor({ store, embedder, weights = {} }) {
+  constructor({ store, embedder, weights = {}, embeddingDim }) {
     this.store = store;
     this.embedder = embedder;
+    // Fail fast: an embedder whose width != configured EMBEDDING_DIM would write
+    // NULL vectors forever. Default to the embedder's own width when unspecified.
+    this.embeddingDim = Number(embeddingDim) || embedder?.dimensions;
+    assertEmbedderDimension(embedder, this.embeddingDim);
     this.weights = {
       vector: Number.isFinite(weights.vector) ? weights.vector : 0.72,
       lexical: Number.isFinite(weights.lexical) ? weights.lexical : 0.22,
       recency: Number.isFinite(weights.recency) ? weights.recency : 0.06,
     };
     this.candidateMultiplier = Number.isFinite(weights.candidateMultiplier) ? weights.candidateMultiplier : 5;
+  }
+
+  // Chunks embedded under a prior model/version (e.g. a dim change) are stale and
+  // MUST be re-embedded. Used by reindex tooling; no DB scan in the JSON store.
+  findStaleChunks() {
+    const current = this.embedder.version;
+    return this.store.findStaleChunks(current);
   }
 
   async indexDocuments(documents, { chunker }) {

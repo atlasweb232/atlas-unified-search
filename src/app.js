@@ -10,6 +10,10 @@ import { createConnectorRegistry } from './connectors/index.js';
 import { createEmbedder } from './embedding.js';
 import { JobRunner } from './jobRunner.js';
 import { requireApiAuth } from './middleware/auth.js';
+import { resolveIdentity, enforceTenantScope, deriveScope, scopeOf, allowedSourcesOf, mintIdentityToken } from './middleware/identity.js';
+import { OnboardingStore } from './onboardingStore.js';
+import { buildAuthorizeUrl, exchangeCode, discoverChannels, signState, verifyState, isStubMode } from './oauth/slack.js';
+import { buildAuthorizeUrl as gdriveAuthorizeUrl, exchangeCode as gdriveExchangeCode, signState as gdriveSignState, verifyState as gdriveVerifyState, isStubMode as gdriveStubMode } from './oauth/gdrive.js';
 import { createJobQueue } from './queue/serviceBusQueue.js';
 import { parseSyncSchedules, summarizeSchedules } from './scheduleConfig.js';
 import { SearchRunCoordinator } from './searchRun.js';
@@ -26,12 +30,18 @@ export async function createApp(config) {
     },
   }));
   app.use(requireApiAuth(config));
+  app.use(resolveIdentity(config));
+  app.use(enforceTenantScope());
 
   const store = await createSearchStore(config);
   await store.load();
+  const onboarding = new OnboardingStore({ dataDir: config.dataDir });
+  await onboarding.load();
   const embedder = await createEmbedder(config);
-  const searchEngine = new SearchEngine({ store, embedder, weights: config.search });
-  const registry = createConnectorRegistry(config);
+  const searchEngine = new SearchEngine({ store, embedder, weights: config.search, embeddingDim: config.embeddingDim });
+  const registry = createConnectorRegistry(config, {
+    credentialResolver: (source, scope) => onboarding.credentialsFor(source, scope),
+  });
   const queue = createJobQueue(config);
   const jobs = new JobRunner({ registry, store, searchEngine, queue, retry: config.syncRetry });
   const searchRuns = new SearchRunCoordinator({ store, searchEngine, registry, sourceTimeoutMs: config.searchRun?.sourceTimeoutMs });
@@ -41,7 +51,7 @@ export async function createApp(config) {
     artifactProvider: new LocalArtifactProvider({ dataDir: config.dataDir, azure: config.artifacts || {} }),
   });
 
-  app.locals.services = { store, searchEngine, registry, jobs, searchRuns, assistant, queue };
+  app.locals.services = { store, searchEngine, registry, jobs, searchRuns, assistant, queue, onboarding };
 
   app.get('/v1/health', (req, res) => {
     refreshStore(store).then(() => {
@@ -51,6 +61,8 @@ export async function createApp(config) {
       embedding: { model: embedder.model, version: embedder.version },
       index: publicIndexStatus(store.status()),
       auth: { required: Boolean(config.auth?.required) },
+      identity: identityStatus(config),
+      onboarding: onboardingStatus(config),
       cors: corsStatus(config),
       queue: { backend: queue.name },
       schedules: scheduleStatus(config),
@@ -79,6 +91,218 @@ export async function createApp(config) {
       res.json({ success: true, setup: connectorSetupGuide(checks) });
     } catch (error) {
       res.status(400).json({ success: false, error: error.message });
+    }
+  });
+
+  // ─── token refresh (session renewal without re-login) ──────────────────────
+  // Exempt from identity binding; verifies the existing token internally.
+  app.post('/v1/auth/refresh', async (req, res) => {
+    const secret = config.identity?.jwtSecret;
+    if (!secret) return res.status(400).json({ success: false, error: 'IDENTITY_JWT_SECRET not configured' });
+    const header = String(req.headers.authorization || '');
+    const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+    if (!token) return res.status(401).json({ success: false, error: 'Missing bearer token' });
+    try {
+      const { verifyJwtHS256Internal } = await import('./middleware/identity.js');
+      const claims = verifyJwtHS256Internal(token, secret);
+      const minted = mintIdentityToken({
+        tenantId: claims.tenantId || claims.tid,
+        userId: claims.userId || claims.sub,
+        sources: claims.sources,
+        ttlSeconds: config.onboarding?.tokenTtlSeconds,
+        issuer: config.identity?.jwtIssuer,
+        audience: config.identity?.jwtAudience,
+      }, secret);
+      return res.json({ success: true, token: minted.token, expiresAt: minted.expiresAt });
+    } catch (error) {
+      return res.status(401).json({ success: false, error: error.message });
+    }
+  });
+
+  // ─── onboarding (admin-provisioned pilot) ─────────────────────────────────
+  // Exempt from identity binding (cross-tenant provisioning); guarded by the
+  // onboarding admin token instead.
+  app.post('/v1/onboarding/tenants', async (req, res) => {
+    if (!onboardingAdminOk(config, req)) return res.status(401).json({ success: false, error: 'Onboarding admin token required' });
+    const { tenantId, name = '' } = req.body || {};
+    if (!tenantId) return res.status(400).json({ success: false, error: 'tenantId is required' });
+    try {
+      const tenant = await onboarding.createTenant({ tenantId, name });
+      return res.status(201).json({ success: true, tenant });
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+  });
+
+  app.post('/v1/onboarding/users', async (req, res) => {
+    if (!onboardingAdminOk(config, req)) return res.status(401).json({ success: false, error: 'Onboarding admin token required' });
+    const { tenantId, userId, email = '', sources = [] } = req.body || {};
+    if (!tenantId || !userId) return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    try {
+      const user = await onboarding.createUser({ tenantId, userId, email, sources });
+      const minted = mintIdentityToken({
+        tenantId,
+        userId,
+        sources,
+        ttlSeconds: config.onboarding?.tokenTtlSeconds,
+        issuer: config.identity?.jwtIssuer,
+        audience: config.identity?.jwtAudience,
+      }, config.identity?.jwtSecret);
+      return res.status(201).json({ success: true, user, token: minted.token, expiresAt: minted.expiresAt });
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+  });
+
+  app.post('/v1/onboarding/connections/:source', async (req, res) => {
+    if (!onboardingAdminOk(config, req)) return res.status(401).json({ success: false, error: 'Onboarding admin token required' });
+    const { tenantId, userId, credentials = {} } = req.body || {};
+    const source = req.params.source;
+    if (!tenantId || !userId) return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    try {
+      registry.get(source); // 404-style guard: only enabled sources are connectable
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    try {
+      const connection = await onboarding.connectSource({ tenantId, userId, source, credentials });
+      const configured = registry.get(source).isConfigured({ tenantId, userId });
+      // Auto-start the first backfill unless explicitly disabled.
+      const backfill = (configured && req.body?.backfill !== false)
+        ? await autoBackfill(jobs, { source, tenantId, userId })
+        : { jobId: null };
+      return res.status(201).json({ success: true, connection, configured, backfillJobId: backfill.jobId });
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+  });
+
+  app.get('/v1/onboarding/tenants/:tenantId/users/:userId', async (req, res) => {
+    if (!onboardingAdminOk(config, req)) return res.status(401).json({ success: false, error: 'Onboarding admin token required' });
+    const { tenantId, userId } = req.params;
+    const user = onboarding.getUser(tenantId, userId);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+    return res.json({ success: true, user, connections: onboarding.listConnections(tenantId, userId) });
+  });
+
+  // ─── Slack OAuth: self-serve "Sign in with Slack" → auto-connect → backfill ──
+  // No admin token: authenticated by Slack. One platform-wide app; a workspace
+  // maps to a tenant. STUB mode (no client id/secret) makes this testable with
+  // no real Slack app — pass code `stub:<team>:<user>:<email>`.
+  app.get('/v1/onboarding/oauth/slack/start', (req, res) => {
+    const secret = config.identity?.jwtSecret;
+    if (!secret) return res.status(400).json({ success: false, error: 'IDENTITY_JWT_SECRET is required for OAuth' });
+    const state = signState({ provider: 'slack', tenantHint: req.query.tenant || '' }, secret);
+    const authorizeUrl = buildAuthorizeUrl({ config, state });
+    if (req.query.redirect === '1') return res.redirect(authorizeUrl);
+    return res.json({ success: true, authorizeUrl, state, stub: isStubMode(config) });
+  });
+
+  app.get('/v1/onboarding/oauth/slack/callback', async (req, res) => {
+    const secret = config.identity?.jwtSecret;
+    try {
+      verifyState(req.query.state, secret);
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    if (req.query.error) return res.status(400).json({ success: false, error: `Slack denied: ${req.query.error}` });
+    if (!req.query.code) return res.status(400).json({ success: false, error: 'Missing authorization code' });
+
+    try {
+      const result = await exchangeCode({ config, code: req.query.code });
+      if (!result.teamId || !result.slackUserId) throw new Error('Slack did not return team/user identity');
+
+      // Workspace → tenant, authed user → platform user (idempotent).
+      const tenantId = `slack:${result.teamId}`;
+      const userId = result.slackUserId;
+      await onboarding.ensureTenant({ tenantId, name: result.teamName });
+      await onboarding.ensureUser({ tenantId, userId, email: result.email, sources: ['slack'] });
+
+      // Workspace bot token is shared tenant-wide; channels the bot can read.
+      const channelIds = await discoverChannels({ config, botToken: result.botToken, stub: result.stub });
+      await onboarding.connectTenantSource({
+        tenantId,
+        source: 'slack',
+        credentials: { botToken: result.botToken, channelIds },
+      });
+
+      // Mint our session token and auto-start the first backfill (vectorization).
+      const minted = mintIdentityToken({
+        tenantId, userId, sources: ['slack'],
+        ttlSeconds: config.onboarding?.tokenTtlSeconds,
+        issuer: config.identity?.jwtIssuer, audience: config.identity?.jwtAudience,
+      }, secret);
+      const backfill = await autoBackfill(jobs, { source: 'slack', tenantId, userId });
+
+      // Bounce back to the frontend with the token, or return JSON.
+      const redirect = config.slack?.oauth?.postLoginRedirect;
+      if (redirect) {
+        const url = new URL(redirect);
+        url.hash = new URLSearchParams({ token: minted.token, tenantId, userId }).toString();
+        return res.redirect(url.toString());
+      }
+      return res.json({
+        success: true, tenantId, userId, token: minted.token, expiresAt: minted.expiresAt,
+        connected: 'slack', channels: channelIds.length, backfillJobId: backfill.jobId, stub: Boolean(result.stub),
+      });
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+  });
+
+  // ─── Google Drive OAuth: self-serve login → auto-connect → backfill ──────────
+  app.get('/v1/onboarding/oauth/gdrive/start', (req, res) => {
+    const secret = config.identity?.jwtSecret;
+    if (!secret) return res.status(400).json({ success: false, error: 'IDENTITY_JWT_SECRET is required for OAuth' });
+    const state = gdriveSignState({ provider: 'gdrive' }, secret);
+    const authorizeUrl = gdriveAuthorizeUrl({ config, state });
+    if (req.query.redirect === '1') return res.redirect(authorizeUrl);
+    return res.json({ success: true, authorizeUrl, state, stub: gdriveStubMode(config) });
+  });
+
+  app.get('/v1/onboarding/oauth/gdrive/callback', async (req, res) => {
+    const secret = config.identity?.jwtSecret;
+    try { gdriveVerifyState(req.query.state, secret); } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    if (req.query.error) return res.status(400).json({ success: false, error: `Google denied: ${req.query.error}` });
+    if (!req.query.code) return res.status(400).json({ success: false, error: 'Missing authorization code' });
+    try {
+      const result = await gdriveExchangeCode({ config, code: req.query.code });
+      if (!result.email) throw new Error('Google did not return user identity');
+
+      const tenantId = `google:${result.email.split('@')[1] || 'unknown'}`;
+      const userId = result.googleUserId || result.email;
+      await onboarding.ensureTenant({ tenantId, name: result.email.split('@')[1] || tenantId });
+      await onboarding.ensureUser({ tenantId, userId, email: result.email, sources: ['google_drive'] });
+      await onboarding.connectTenantSource({
+        tenantId, source: 'google_drive',
+        credentials: {
+          clientId: config.gdrive.clientId,
+          clientSecret: config.gdrive.clientSecret,
+          refreshToken: result.refreshToken,
+        },
+      });
+
+      const minted = mintIdentityToken({
+        tenantId, userId, sources: ['google_drive'],
+        ttlSeconds: config.onboarding?.tokenTtlSeconds,
+        issuer: config.identity?.jwtIssuer, audience: config.identity?.jwtAudience,
+      }, secret);
+      const backfill = await autoBackfill(jobs, { source: 'google_drive', tenantId, userId });
+
+      const redirect = config.gdrive?.oauth?.postLoginRedirect;
+      if (redirect) {
+        const url = new URL(redirect);
+        url.hash = new URLSearchParams({ token: minted.token, tenantId, userId }).toString();
+        return res.redirect(url.toString());
+      }
+      return res.json({
+        success: true, tenantId, userId, token: minted.token, expiresAt: minted.expiresAt,
+        connected: 'google_drive', backfillJobId: backfill.jobId, stub: Boolean(result.stub),
+      });
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
     }
   });
 
@@ -318,13 +542,17 @@ export async function createApp(config) {
   });
 
   app.post('/v1/search', async (req, res) => {
-    const { tenantId, userId, query, sources, filters, limit } = req.body || {};
+    const { tenantId: bodyTenant, userId: bodyUser, query, sources, filters, limit } = req.body || {};
+    const scope = deriveScope(req, res, { tenantId: bodyTenant, userId: bodyUser });
+    if (!scope) return undefined;
+    const { tenantId, userId } = scope;
     if (!tenantId || !userId || !query) {
       return res.status(400).json({ success: false, error: 'tenantId, userId, and query are required' });
     }
     try {
       await refreshStore(store);
-      const allowedSources = filterAllowedSources(config, tenantId, userId, sources);
+      const requestedSources = intersectAllowed(sources, allowedSourcesOf(req));
+      const allowedSources = filterAllowedSources(config, tenantId, userId, requestedSources);
       if (hasSourcePermissions(config) && !allowedSources.length) {
         return res.status(403).json({ success: false, error: 'No sources are enabled for this user' });
       }
@@ -631,15 +859,69 @@ async function requireReadyConnector(registry, source, options = {}, scope = {})
 }
 
 function matchesScope(req, row) {
-  const tenantId = req.query.tenantId || req.headers['x-tenant-id'];
-  const userId = req.query.userId || req.headers['x-user-id'];
+  // Verified identity is authoritative; shared_token falls back to request IDs.
+  const { tenantId, userId } = scopeOf(req, {
+    tenantId: req.query.tenantId, userId: req.query.userId,
+  });
   return Boolean(tenantId && userId && row.tenantId === tenantId && row.userId === userId);
 }
 
 function scopeFromRequest(req) {
-  return {
+  return scopeOf(req, {
     tenantId: req.query.tenantId || req.headers['x-tenant-id'] || '',
     userId: req.query.userId || req.headers['x-user-id'] || '',
+  });
+}
+
+// Restrict requested sources to those the identity is entitled to (jwt/api_key
+// `sources` claim). No claim → no extra restriction here (source-permission
+// config still applies downstream).
+function intersectAllowed(requested, allowed) {
+  if (!Array.isArray(allowed)) return requested;
+  const requestedList = Array.isArray(requested) && requested.length ? requested : allowed;
+  return requestedList.filter((source) => allowed.includes(source));
+}
+
+function identityStatus(config) {
+  const mode = config.identity?.mode || 'shared_token';
+  const bound = mode === 'jwt' || mode === 'api_key';
+  return {
+    mode,
+    // shared_token trusts caller-supplied scope → not safe for real multi-tenancy.
+    multiTenantSafe: bound,
+    detail: bound ? 'identity_bound_scope_verified' : 'shared_token_scope_trusted_not_multi_tenant_safe',
+  };
+}
+
+function onboardingAdminOk(config, req) {
+  const expected = config.onboarding?.adminToken || '';
+  if (!expected) return true; // unguarded (dev/test); flagged in /v1/health
+  const presented = req.headers['x-admin-token']
+    || (String(req.headers.authorization || '').startsWith('Bearer ') ? req.headers.authorization.slice('Bearer '.length) : '');
+  if (!presented) return false;
+  const expectedBuffer = Buffer.from(expected);
+  const presentedBuffer = Buffer.from(String(presented));
+  return expectedBuffer.length === presentedBuffer.length && timingSafeEqual(expectedBuffer, presentedBuffer);
+}
+
+// Kick off the first sync so connecting a source begins vectorization with no
+// extra call. Runs in the background; never fails the calling request.
+async function autoBackfill(jobs, { source, tenantId, userId }) {
+  try {
+    const job = await jobs.enqueue({ source, tenantId, userId, options: {}, autoStart: true });
+    return { jobId: job.id };
+  } catch (error) {
+    return { jobId: null, error: error.message };
+  }
+}
+
+function onboardingStatus(config) {
+  const guarded = Boolean(config.onboarding?.adminToken);
+  const canMint = Boolean(config.identity?.jwtSecret);
+  return {
+    guarded,
+    canMintTokens: canMint,
+    detail: guarded ? 'admin_token_required' : 'unguarded_dev_only',
   };
 }
 

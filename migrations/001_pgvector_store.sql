@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS unified_chunks (
   summary text NOT NULL DEFAULT '',
   embedding_model text NOT NULL DEFAULT '',
   embedding_version text NOT NULL DEFAULT '',
-  embedding vector(1536),
+  -- Canonical width = EMBEDDING_DIM (BAAI/bge-base-en-v1.5 = 768). 002 M3 will
+  -- template this to the configured dimension; the writer/embedder assert it.
+  embedding vector(768),
   embedding_json jsonb NOT NULL DEFAULT '[]'::jsonb,
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),

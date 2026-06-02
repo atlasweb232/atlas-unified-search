@@ -49,7 +49,20 @@ const fixtures = {
   }],
 };
 
+// Only seed sources that are actually registered/enabled on the server, so this
+// stays in sync with UNIFIED_SEARCH_ENABLED_SOURCES (Phase 1 = email/slack/gdrive).
+const connectorsResponse = await fetch(`${base}/v1/connectors`);
+const connectorsData = await connectorsResponse.json();
+if (!connectorsResponse.ok || connectorsData.success === false) {
+  throw new Error(`connectors: ${connectorsData.error || connectorsResponse.statusText}`);
+}
+const enabled = new Set((connectorsData.connectors || []).map((connector) => connector.source));
+
 for (const [source, sourceFixtures] of Object.entries(fixtures)) {
+  if (!enabled.has(source)) {
+    console.log(`${source}: skipped (not enabled)`);
+    continue;
+  }
   const response = await fetch(`${base}/v1/sync/${source}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -13,24 +13,24 @@ deterministic local embedder, and mock providers only.
 
 ## M1: Store interface decoupling
 
-- [ ] Define explicit `SearchStore` interface (retrieval / scoped reads /
+- [x] Define explicit `SearchStore` interface (retrieval / scoped reads /
       row-scoped writes / operational).
-- [ ] Make `JsonSearchStore` implement it with a **scoped, bounded** lexical
+- [x] Make `JsonSearchStore` implement it with a **scoped, bounded** lexical
       search (no full-corpus scan).
-- [ ] Stop `SearchEngine.search` from calling `store.listChunks()`; delegate to
+- [x] Stop `SearchEngine.search` from calling `store.listChunks()`; delegate to
       `store.searchChunks(scope, queryVector, k)` and only re-rank candidates.
-- [ ] Make ranking weights configurable (replace hard-coded 0.72/0.22/0.06).
-- [ ] Unit tests for scoped retrieval + re-rank parity (no DB required).
+- [x] Make ranking weights configurable (replace hard-coded 0.72/0.22/0.06).
+- [x] Unit tests for scoped retrieval + re-rank parity (no DB required).
 
 ## M2: Embedding dimension integrity
 
-- [ ] Single source of truth for `EMBEDDING_DIM` shared by embedder, chunk
+- [x] Single source of truth for `EMBEDDING_DIM` shared by embedder, chunk
       writer, and migration.
-- [ ] Local deterministic embedder can emit vectors at the configured dimension.
-- [ ] Fail fast at startup when embedder dim ≠ vector column dim.
-- [ ] Detect `embeddingModel`/`embeddingVersion` change per chunk and flag for
+- [x] Local deterministic embedder can emit vectors at the configured dimension.
+- [x] Fail fast at startup when embedder dim ≠ vector column dim.
+- [x] Detect `embeddingModel`/`embeddingVersion` change per chunk and flag for
       reindex.
-- [ ] Tests: matching dim → indexes vectors; mismatched dim → startup error.
+- [x] Tests: matching dim → indexes vectors; mismatched dim → startup error.
 
 ## M3: pgvector scoped retrieval
 
@@ -57,16 +57,16 @@ deterministic local embedder, and mock providers only.
 
 ## M5: Identity-bound tenancy
 
-- [ ] `src/middleware/identity.js` with `IDENTITY_MODE` = `jwt` | `api_key` |
+- [x] `src/middleware/identity.js` with `IDENTITY_MODE` = `jwt` | `api_key` |
       `shared_token`.
-- [ ] JWT mode: verify signature, read `tenantId`/`userId`/allowed sources,
+- [x] JWT mode: verify signature, read `tenantId`/`userId`/allowed sources,
       reject scope mismatch.
-- [ ] API-key mode: per-tenant key → tenant/user binding; reject out-of-scope.
-- [ ] Compose with `requireApiAuth`; keep webhooks + `/v1/health` behaviour.
-- [ ] `matchesScope()` enforces identity entitlement, not just row equality.
-- [ ] Data routes derive scope from identity instead of trusting raw body IDs.
-- [ ] `production-readiness` reports shared-token as not multi-tenant-safe.
-- [ ] Tests: cross-tenant ID substitution → 403 (jwt + api_key modes).
+- [x] API-key mode: per-tenant key → tenant/user binding; reject out-of-scope.
+- [x] Compose with `requireApiAuth`; keep webhooks + `/v1/health` behaviour.
+- [x] `matchesScope()` enforces identity entitlement, not just row equality.
+- [x] Data routes derive scope from identity instead of trusting raw body IDs.
+- [x] `production-readiness` reports shared-token as not multi-tenant-safe.
+- [x] Tests: cross-tenant ID substitution → 403 (jwt + api_key modes).
 
 ## M6: Bounded operational tables & SSE
 

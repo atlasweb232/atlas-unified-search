@@ -31,6 +31,16 @@ export function loadConfig() {
     port: number('PORT', 4420),
     dataDir: process.env.DATA_DIR || '.data',
     embeddingProvider: process.env.EMBEDDING_PROVIDER || 'hash',
+    // Active connector set. Phase 1 ships email + slack + google_drive only;
+    // conference_bridge / knowledge_base / data_fabric are coded but deferred to
+    // a later feature phase. Re-enable by adding them to UNIFIED_SEARCH_ENABLED_SOURCES.
+    enabledSources: (() => {
+      const requested = list('UNIFIED_SEARCH_ENABLED_SOURCES');
+      return requested.length ? requested : ['email', 'slack', 'google_drive'];
+    })(),
+    // Single source of truth for vector width. Canonical = BAAI/bge-base-en-v1.5 (768).
+    // Shared by the embedder, the chunk writer, and the vector column; startup asserts it.
+    embeddingDim: number('EMBEDDING_DIM', 768),
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     embeddingModel: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
     chat: {
@@ -50,6 +60,23 @@ export function loadConfig() {
     auth: {
       required: requireAuth,
       token: authToken,
+    },
+    identity: {
+      // shared_token = legacy single-token, scope trusted from request (NOT
+      // multi-tenant-safe). jwt / api_key = identity-bound, scope verified.
+      mode: (process.env.IDENTITY_MODE || 'shared_token').toLowerCase(),
+      jwtSecret: process.env.IDENTITY_JWT_SECRET || '',
+      jwtIssuer: process.env.IDENTITY_JWT_ISSUER || '',
+      jwtAudience: process.env.IDENTITY_JWT_AUDIENCE || '',
+      // { "tenantA": { "key": "kA", "users": ["u1","u2"] }, ... }
+      tenantKeys: json('IDENTITY_TENANT_KEYS_JSON', {}),
+    },
+    onboarding: {
+      // Admin token guarding the /v1/onboarding/* provisioning endpoints. When
+      // empty, onboarding is UNGUARDED (dev/test only; flagged in /v1/health).
+      adminToken: process.env.ONBOARDING_ADMIN_TOKEN || '',
+      // TTL for minted user identity tokens (seconds).
+      tokenTtlSeconds: number('ONBOARDING_TOKEN_TTL_SECONDS', 3600),
     },
     cors: {
       origins: list('UNIFIED_SEARCH_CORS_ORIGINS'),
@@ -91,6 +118,23 @@ export function loadConfig() {
       signingSecret: process.env.SLACK_SIGNING_SECRET || '',
       eventTenantId: process.env.SLACK_EVENT_TENANT_ID || '',
       eventUserId: process.env.SLACK_EVENT_USER_ID || '',
+      oauth: {
+        // One-time, platform-wide Slack app. When clientId/clientSecret are
+        // empty the OAuth flow runs in STUB mode (credential-free testing).
+        clientId: process.env.SLACK_CLIENT_ID || '',
+        clientSecret: process.env.SLACK_CLIENT_SECRET || '',
+        redirectUri: process.env.SLACK_OAUTH_REDIRECT_URI || '',
+        // Bot scopes needed to read + vectorize messages.
+        scopes: list('SLACK_OAUTH_SCOPES').length
+          ? list('SLACK_OAUTH_SCOPES')
+          : ['channels:history', 'channels:read', 'users:read'],
+        // user_scope for "Sign in with Slack" identity (OIDC-style).
+        userScopes: list('SLACK_OAUTH_USER_SCOPES').length
+          ? list('SLACK_OAUTH_USER_SCOPES')
+          : ['openid', 'email', 'profile'],
+        // Where to bounce the browser after callback (frontend), token appended.
+        postLoginRedirect: process.env.SLACK_OAUTH_POST_LOGIN_REDIRECT || '',
+      },
     },
     gdrive: {
       clientId: process.env.GOOGLE_CLIENT_ID || '',
@@ -103,6 +147,11 @@ export function loadConfig() {
       webhookChannelIds: list('GDRIVE_WEBHOOK_CHANNEL_IDS'),
       eventTenantId: process.env.GDRIVE_EVENT_TENANT_ID || '',
       eventUserId: process.env.GDRIVE_EVENT_USER_ID || '',
+      oauth: {
+        redirectUri: process.env.GDRIVE_OAUTH_REDIRECT_URI || '',
+        scopes: ['https://www.googleapis.com/auth/drive.readonly', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile'],
+        postLoginRedirect: process.env.GDRIVE_OAUTH_POST_LOGIN_REDIRECT || process.env.SLACK_OAUTH_POST_LOGIN_REDIRECT || '',
+      },
     },
     email: {
       baseUrl: process.env.EMAIL_CONNECTOR_BASE_URL || '',

@@ -1,16 +1,38 @@
 export async function createEmbedder(config) {
+  const dimensions = Number(config.embeddingDim) || 768;
   if (config.embeddingProvider === 'openai' && config.openaiApiKey) {
     return {
       model: config.embeddingModel,
-      version: `openai:${config.embeddingModel}`,
-      embed: (text) => openaiEmbedding(config, text),
+      // version encodes the dimension so a dim change is detected as stale (reindex).
+      version: `openai:${config.embeddingModel}:${dimensions}`,
+      dimensions,
+      embed: (text) => openaiEmbedding(config, text, dimensions),
     };
   }
   return {
     model: 'hash-embedding',
-    version: 'hash:v1',
-    embed: async (text) => hashEmbedding(text),
+    version: `hash:v1:${dimensions}`,
+    dimensions,
+    embed: async (text) => hashEmbedding(text, dimensions),
   };
+}
+
+// Fail-fast guard: the embedder MUST produce vectors at exactly the configured
+// width, or every Postgres write would silently store NULL (the original bug).
+export function assertEmbedderDimension(embedder, expectedDim) {
+  const expected = Number(expectedDim);
+  if (!Number.isFinite(expected) || expected <= 0) {
+    throw new Error(`Invalid EMBEDDING_DIM: ${expectedDim}`);
+  }
+  if (!embedder || !Number.isFinite(embedder.dimensions)) {
+    throw new Error('Embedder must declare a numeric `dimensions`');
+  }
+  if (embedder.dimensions !== expected) {
+    throw new Error(
+      `Embedding dimension mismatch: embedder=${embedder.dimensions} but EMBEDDING_DIM=${expected}. `
+      + 'Set EMBEDDING_DIM to the embedder width and migrate the vector column to match.',
+    );
+  }
 }
 
 export function hashEmbedding(text, dimensions = 384) {
@@ -30,18 +52,24 @@ export function cosineSimilarity(left, right) {
   return score;
 }
 
-async function openaiEmbedding(config, text) {
+async function openaiEmbedding(config, text, dimensions) {
   const response = await fetch('https://api.openai.com/v1/embeddings', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${config.openaiApiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ model: config.embeddingModel, input: String(text || '').slice(0, 24000) }),
+    // text-embedding-3-* honours `dimensions`, so OpenAI output matches the
+    // configured column width (e.g. 768) instead of its native 1536.
+    body: JSON.stringify({ model: config.embeddingModel, input: String(text || '').slice(0, 24000), dimensions }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error?.message || 'Embedding request failed');
-  return normalize(data.data?.[0]?.embedding || []);
+  const vector = normalize(data.data?.[0]?.embedding || []);
+  if (vector.length !== dimensions) {
+    throw new Error(`Embedding provider returned ${vector.length} dims, expected ${dimensions}`);
+  }
+  return vector;
 }
 
 function normalize(vector) {

@@ -18,7 +18,7 @@ if (!schedules.length) {
 const store = await createSearchStore(config);
 await store.load();
 const embedder = await createEmbedder(config);
-const searchEngine = new SearchEngine({ store, embedder, weights: config.search });
+const searchEngine = new SearchEngine({ store, embedder, weights: config.search, embeddingDim: config.embeddingDim });
 const registry = createConnectorRegistry(config);
 const queue = createJobQueue(config);
 const jobs = new JobRunner({ registry, store, searchEngine, queue, retry: config.syncRetry });

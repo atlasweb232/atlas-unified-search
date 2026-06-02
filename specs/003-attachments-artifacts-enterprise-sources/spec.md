@@ -113,7 +113,7 @@ This feature adds new endpoints and one new action type but does not change the
   derived from indexed documents; a dedicated contacts connector is a future
   extension, not required here.
 
-### FR-4: Ephemeral session workbench
+### FR-4: Ephemeral session workbench + hot-memory cache
 
 - A session workbench holds a user's working result set (selected line items +
   the originating search run reference) in a **short-lived store with a TTL**;
@@ -122,9 +122,21 @@ This feature adds new endpoints and one new action type but does not change the
   by identity. Assistant actions (summarize/report/artifact) may target a
   workbench session in addition to a `searchRunId`.
 - The store MUST be pluggable: an in-process TTL map for dev/test (no external
-  dependency) and a Redis-compatible adapter for multi-instance production.
+  dependency) and a **Redis** adapter for multi-instance production.
+- **Session hot-memory cache (Redis):** beyond the selected-items workbench, the
+  Redis layer is the session's *hot memory* and MUST cache, TTL-bound and
+  keyed by `{tenantId}:{userId}:{sessionId}`:
+  - the most recent search **result set(s)** for a session (so pagination,
+    expand, and re-rank tweaks don't re-hit the vector engine),
+  - computed **query embeddings** (cache key = normalized query + space), to
+    skip re-embedding repeated/near-identical queries within a session,
+  - the assistant's **working context** (summaries, selected provenance) so
+    summarize/report/presentation actions reuse warm state instead of refetching.
+- Cache keys MUST be tenant- and user-scoped; no cross-tenant or cross-user
+  cache hits are possible. Cache is read-through/write-through over the vector
+  engine, never a system of record.
 - Expiry and contents MUST respect retention/redaction rules; nothing sensitive
-  persists past TTL.
+  persists past TTL. A session-end (logout/expiry) MUST be able to flush its keys.
 
 ### FR-5: Real, pluggable artifact generation
 

@@ -3,6 +3,16 @@ import { createRoot } from 'react-dom/client';
 import { UnifiedSearchWorkspace } from './UnifiedSearchWorkspace.jsx';
 import './styles.css';
 
+// After Slack OAuth callback the backend bounces to /#token=...&tenantId=...&userId=...
+const hashParams = new URLSearchParams(window.location.hash.slice(1));
+if (hashParams.get('token')) {
+  localStorage.setItem('atlas_unified_search_auth_token', hashParams.get('token'));
+  if (hashParams.get('tenantId')) localStorage.setItem('atlas_unified_search_tenant_id', hashParams.get('tenantId'));
+  if (hashParams.get('userId')) localStorage.setItem('atlas_unified_search_user_id', hashParams.get('userId'));
+  // Clean the hash so the token doesn't sit in the URL bar.
+  window.history.replaceState(null, '', window.location.pathname);
+}
+
 const runtimeParams = new URLSearchParams(window.location.search);
 const runtimeConfig = {
   apiBaseUrl: runtimeParams.get('apiBaseUrl') || localStorage.getItem('atlas_unified_search_api_base') || import.meta.env.VITE_UNIFIED_SEARCH_API_BASE || '',

@@ -406,3 +406,44 @@ button:disabled {
     padding-left: 12px;
   }
 }
+
+.slack-signin-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  background: #fff;
+  color: #1d1c1d;
+  border: 1.5px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+.slack-signin-button:hover { background: #f8f8f8; border-color: #4a154b; }
+
+.auth-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.auth-user {
+  font-size: 12px;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signin-buttons { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.google-signin-button {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 10px 14px; background: #fff; color: #1d1c1d;
+  border: 1.5px solid #ddd; border-radius: 6px; font-size: 14px;
+  font-weight: 600; cursor: pointer;
+}
+.google-signin-button:hover { background: #f8f8f8; border-color: #4285F4; }

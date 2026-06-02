@@ -3,6 +3,8 @@ import { timingSafeEqual } from 'node:crypto';
 export function requireApiAuth(config) {
   return (req, res, next) => {
     if (req.path === '/v1/health') return next();
+    if (req.path.startsWith('/v1/onboarding/oauth/')) return next(); // covers both slack + gdrive
+    if (req.path === '/v1/auth/refresh') return next();
     if (req.path === '/v1/webhooks/slack/events') return next();
     if (req.path === '/v1/webhooks/google-drive/changes') return next();
     if (req.path === '/v1/webhooks/azure-blob/events') return next();

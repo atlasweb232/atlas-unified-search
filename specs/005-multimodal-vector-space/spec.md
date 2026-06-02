@@ -42,14 +42,21 @@ and the visual layer of conference video search.
 
 ## Dependencies
 
-- **Common embedding scheme (decision):** the `text` space MUST use
-  `BAAI/bge-base-en-v1.5` (768-dim) via the **existing shared GPU embedding
-  service** (reused, not re-deployed). Email stays **federated** (queried via
-  its own service/Elasticsearch) — convergence is embedding-only, so email
-  vectors and unified-search vectors share the same model and are comparable.
-  Federated email scores still require normalization at merge (`008` fusion),
-  since Elasticsearch scoring and Qdrant cosine differ in scale even at the
-  same model.
+- **Common embedding scheme (decision, 2026-06-02):** the `text` space MUST use
+  `BAAI/bge-base-en-v1.5` (768-dim) via the **shared GPU embedding service**
+  (reused, not re-deployed). This is part of building **our own tenancy-based
+  vector engine across all sources and knowledge repositories** — Glean / Slack
+  / Vertex semantic APIs are NOT the substrate; they are optional per-tenant
+  `external_federated` adapters only (see `006`).
+- **Email convergence (target = own engine):** the end state is email vectors
+  living in the **same per-tenant Qdrant engine** under the same BGE-768 scheme,
+  not a separate store. Until email is re-embedded off its live
+  lightweight-hash-384 vectors, it stays **federated transitionally** (queried
+  via its own service); during that window federated email scores require
+  normalization at merge (`008` fusion) since the source's scoring scale differs
+  from native Qdrant cosine even at the same model. Re-embedding email (and the
+  legacy OpenAI-1536 unified-search vectors) onto BGE-768 is the one item with
+  real backfill cost.
 - `002 M2` dimension fix is a hard prerequisite (the dimension must be a single
   configured truth — now **768** — before this spec adds a second space).
 - `003 M2` attachment reconstruction and `004 M4` clip endpoint are the
@@ -87,10 +94,11 @@ and the visual layer of conference video search.
     the Atlas email system's **BGE embedding service** — `atlasweb-mini/
     microservices/email-assistant/backend/embeddingService` (FastAPI + ONNX,
     deployable next to the other Azure Container Apps; also exposed via a GPU
-    client). Email itself stays **federated over its Elasticsearch** vector
-    store, so unified-search vectors are **comparable to federated email
-    results** (same model). Must satisfy `002 M2`. BGE retrieval instruction
-    prefix + **L2 normalization** MUST match the email service exactly
+    client). Email currently stays **federated over its own Qdrant store on
+    Azure** (`atlas-email-qdrant`) transitionally, converging into the shared
+    per-tenant engine once re-embedded; same model keeps unified-search vectors
+    **comparable to federated email results**. Must satisfy `002 M2`. BGE
+    retrieval prefix + **L2 normalization** MUST match the email service exactly
     (confirmed in `bge_encoder.py`: 768 dims, `normalize(p=2)`, query prefix).
   - `vision` — for image-derived embeddings (document page thumbnails, video
     keyframes, slide captures). Dimension = `VISION_EMBEDDING_DIM`

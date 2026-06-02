@@ -12,7 +12,8 @@ import { JsonSearchStore, SearchEngine } from '../src/store.js';
 function makeEmbedder() {
   return {
     model: 'hash-embedding',
-    version: 'hash:v1',
+    version: 'hash:v1:384',
+    dimensions: 384,
     embed: async (text) => hashEmbedding(text),
   };
 }
@@ -171,7 +172,7 @@ test('search result order is stable — most relevant document ranks first', asy
 test('SearchEngine respects custom weights', () => {
   const engine = new SearchEngine({
     store: null,
-    embedder: null,
+    embedder: makeEmbedder(),
     weights: { vector: 0.5, lexical: 0.3, recency: 0.2, candidateMultiplier: 10 },
   });
   assert.equal(engine.weights.vector, 0.5);
@@ -181,7 +182,7 @@ test('SearchEngine respects custom weights', () => {
 });
 
 test('SearchEngine falls back to default weights when none supplied', () => {
-  const engine = new SearchEngine({ store: null, embedder: null });
+  const engine = new SearchEngine({ store: null, embedder: makeEmbedder() });
   assert.equal(engine.weights.vector, 0.72);
   assert.equal(engine.weights.lexical, 0.22);
   assert.equal(engine.weights.recency, 0.06);
