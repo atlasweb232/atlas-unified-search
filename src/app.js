@@ -226,6 +226,15 @@ export async function createApp(config) {
         credentials: { botToken: result.botToken, channelIds },
       });
 
+      // Notify auth-service so it can record a source_connections row keyed to
+      // this user's Atlas account (fire-and-forget; never blocks the OAuth redirect).
+      notifySourceConnectCallback(config, {
+        sourceId: 'slack',
+        email: result.email,
+        credentialRef: `${tenantId}:*:slack`,
+        providerId: 'slack',
+      }).catch((error) => console.error('[source-connect-callback] slack:', error.message));
+
       // Mint our session token and auto-start the first backfill (vectorization).
       const minted = mintIdentityToken({
         tenantId, userId, sources: ['slack'],
@@ -283,6 +292,14 @@ export async function createApp(config) {
           refreshToken: result.refreshToken,
         },
       });
+
+      // Notify auth-service (fire-and-forget; never blocks the OAuth redirect).
+      notifySourceConnectCallback(config, {
+        sourceId: 'gdrive',
+        email: result.email,
+        credentialRef: `${tenantId}:*:google_drive`,
+        providerId: 'google-workspace',
+      }).catch((error) => console.error('[source-connect-callback] gdrive:', error.message));
 
       const minted = mintIdentityToken({
         tenantId, userId, sources: ['google_drive'],
@@ -777,6 +794,55 @@ export async function createApp(config) {
     if (!actionJob) return res.status(404).json({ success: false, error: 'Assistant action not found' });
     if (!matchesScope(req, actionJob)) return res.status(403).json({ success: false, error: 'Forbidden' });
     return res.json({ success: true, actionJob });
+  });
+
+  // ─── Internal credential resolver (called by atlas-source-provider-gateway) ───
+  // Guards itself with its own token; bypasses global auth since path is /internal/.
+  app.post('/internal/credentials/resolve', async (req, res) => {
+    const resolverToken = config.sourceLifecycle?.credentialResolverToken || '';
+    if (!resolverToken) {
+      return res.status(503).json({ success: false, code: 'RESOLVER_NOT_CONFIGURED', error: 'Credential resolver is not configured' });
+    }
+    const presented = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    if (!constantTimeEquals(presented, resolverToken)) {
+      return res.status(401).json({ success: false, code: 'UNAUTHORIZED', error: 'Unauthorized' });
+    }
+    const body = req.body || {};
+    const credentialRef = String(body.credential_ref || '').trim();
+    const tenantId = String(body.tenant_id || '').trim();
+    const userId = String(body.user_id || '').trim();
+    const sourceId = String(body.source_id || '').trim();
+    const providerId = String(body.provider_id || '').trim();
+    if (!credentialRef || !tenantId || !userId || !sourceId || !providerId) {
+      return res.status(400).json({ success: false, code: 'MISSING_FIELDS', error: 'credential_ref, tenant_id, user_id, source_id, provider_id are required' });
+    }
+    // credential_ref format: "${unifiedTenantId}:${unifiedUserId}:${source}"
+    // unifiedTenantId may contain colons (e.g. "slack:T123", "google:example.com")
+    // Use "*" as unifiedUserId for tenant-wide credentials.
+    const parts = credentialRef.split(':');
+    if (parts.length < 3) {
+      return res.status(400).json({ success: false, code: 'INVALID_CREDENTIAL_REF', error: 'Invalid credential_ref' });
+    }
+    const refSource = parts[parts.length - 1];
+    const refUserId = parts[parts.length - 2];
+    const refTenantId = parts.slice(0, parts.length - 2).join(':');
+    const credentials = onboarding.credentialsFor(refSource, { tenantId: refTenantId, userId: refUserId });
+    if (!credentials || Object.keys(credentials).length === 0) {
+      return res.status(404).json({ success: false, code: 'CREDENTIAL_NOT_FOUND', error: 'Credential not found' });
+    }
+    // Return input binding fields verbatim — source gateway validates these match
+    // what auth-service recorded in source_connections.
+    return res.json({
+      success: true,
+      credential: {
+        tenant_id: tenantId,
+        user_id: userId,
+        source_id: sourceId,
+        provider_id: providerId,
+        access_token: credentials.botToken || credentials.accessToken || credentials.access_token || '',
+        refresh_token: credentials.refreshToken || credentials.refresh_token || '',
+      },
+    });
   });
 
   const frontendDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../frontend/dist');
@@ -1363,6 +1429,22 @@ function setupNextAction(source, missing, check) {
     return 'Wire EMAIL_VECTOR_SEARCH_URL and EMAIL_READINESS_USER_EMAIL to the Atlas email backend, then run email readiness and search smoke.';
   }
   return 'Configure required connector settings and run readiness.';
+}
+
+async function notifySourceConnectCallback(config, { sourceId, email, credentialRef, providerId }) {
+  const base = (config.sourceLifecycle?.connectCallbackUrl || '').replace(/\/$/, '');
+  const token = config.sourceLifecycle?.connectCallbackToken || '';
+  if (!base || !token) return;
+  const url = `${base}/v1/sources/${sourceId}/connect-callback`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_email: email, credential_ref: credentialRef, provider_id: providerId }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || data.code || `http_${response.status}`);
+  }
 }
 
 function liveSmokeGuide(source) {

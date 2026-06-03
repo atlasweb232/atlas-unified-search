@@ -177,6 +177,11 @@ export function loadConfig() {
       readinessPath: process.env.DATA_FABRIC_READINESS_PATH || '/health',
       recordsPath: process.env.DATA_FABRIC_RECORDS_PATH || '/records',
     },
+    sourceLifecycle: {
+      connectCallbackUrl: process.env.ATLAS_SOURCE_CONNECT_CALLBACK_URL || '',
+      connectCallbackToken: process.env.ATLAS_SOURCE_CONNECT_CALLBACK_TOKEN || '',
+      credentialResolverToken: process.env.ATLAS_SOURCE_CREDENTIAL_RESOLVER_TOKEN || '',
+    },
     search: {
       vectorWeight: number('SEARCH_VECTOR_WEIGHT', 72) / 100,
       lexicalWeight: number('SEARCH_LEXICAL_WEIGHT', 22) / 100,
