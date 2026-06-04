@@ -13,6 +13,11 @@ export function requireApiAuth(config) {
 
     const header = String(req.headers.authorization || '');
     const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+    // In jwt/api_key identity modes, tokens are JWTs — not the shared auth token.
+    // Pass them through so resolveIdentity can verify and bind scope downstream.
+    const identityMode = config.identity?.mode || 'shared_token';
+    const isJwtLike = token.split('.').length === 3;
+    if (identityMode !== 'shared_token' && isJwtLike) return next();
     if (!constantTimeEquals(token, config.auth.token)) {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
