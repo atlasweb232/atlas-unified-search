@@ -1,8 +1,10 @@
 import cors from 'cors';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import express from 'express';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BlobServiceClient } from '@azure/storage-blob';
 import { AssistantActionService } from './assistant/actions.js';
 import { LocalArtifactProvider } from './assistant/artifacts.js';
 import { createChatProvider } from './assistant/providers.js';
@@ -19,6 +21,7 @@ import { parseSyncSchedules, summarizeSchedules } from './scheduleConfig.js';
 import { SearchRunCoordinator } from './searchRun.js';
 import { createSearchStore } from './stores/postgresStore.js';
 import { SearchEngine } from './store.js';
+import { createChunks, createDocument, oneLine, SOURCES } from './model.js';
 
 export async function createApp(config) {
   const app = express();
@@ -541,6 +544,172 @@ export async function createApp(config) {
     }
   });
 
+  app.post('/v1/meeting/archive', async (req, res) => {
+    return handleMeetingArchiveOperation({ req, res, config, store, searchEngine, operation: 'archive' });
+  });
+
+  app.post('/v1/meeting/ingest', async (req, res) => {
+    return handleMeetingArchiveOperation({ req, res, config, store, searchEngine, operation: 'ingest' });
+  });
+
+  app.post('/v1/meeting/recording/upload', async (req, res) => {
+    const request = req.body || {};
+    const scope = deriveScope(req, res, {
+      tenantId: request.tenantId || request.TenantId || '',
+      userId: request.userId || request.UserId || req.headers['x-user-id'] || unboundOwnerEmail(req, request),
+    });
+    if (!scope) return undefined;
+    const { tenantId, userId } = scope;
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    }
+    if (!meetingSourceAllowed({ req, config, tenantId, userId })) {
+      return res.status(403).json({ success: false, error: 'Source is not enabled for this user: conference_bridge' });
+    }
+
+    const meetingId = stringField(request, 'meetingId', 'MeetingId');
+    const requestId = stringField(request, 'requestId', 'RequestId') || meetingId;
+    if (!meetingId || !requestId) {
+      return res.status(400).json({ success: false, error: 'meetingId and requestId are required' });
+    }
+
+    try {
+      await refreshStore(store);
+      const recordingId = stableId('recording', tenantId, userId, meetingId, requestId);
+      const storage = meetingRecordingStorage(config, recordingId, recordingExtension(request));
+      const uploadUrl = absoluteUrl(req, `/v1/meeting/recording/blob/${encodeURIComponent(recordingId)}?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(userId)}`);
+      const contentType = stringField(request, 'contentType', 'ContentType') || 'application/octet-stream';
+      const artifact = store.upsertArtifact({
+        id: recordingId,
+        tenantId,
+        userId,
+        type: 'meeting_recording_upload',
+        status: 'upload_requested',
+        meetingId,
+        requestId,
+        recordingUri: storage.recordingUri,
+        storageBackend: storage.backend,
+        objectPath: storage.objectPath,
+        blobName: storage.blobName,
+        contentType,
+        expectedSizeBytes: numberField(request, 'sizeBytes', 'SizeBytes'),
+        checksumSha256: stringField(request, 'checksumSha256', 'ChecksumSha256'),
+        metadata: request.metadata || request.Metadata || {},
+      });
+      store.audit({
+        eventType: 'meeting_recording_upload_requested',
+        tenantId,
+        userId,
+        source: SOURCES.conference,
+        metadata: { meetingId, requestId, recordingId },
+      });
+      await store.save();
+      return res.status(201).json({
+        success: true,
+        ok: true,
+        recordingId,
+        uploadId: recordingId,
+        uploadUrl,
+        recordingUri: storage.recordingUri,
+        objectUri: storage.recordingUri,
+        headers: { 'content-type': contentType },
+        expiresAtUtc: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+        status: artifact.status,
+      });
+    } catch (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.put('/v1/meeting/recording/blob/:recordingId', express.raw({ type: '*/*', limit: '512mb' }), async (req, res) => {
+    const recordingId = req.params.recordingId;
+    try {
+      await refreshStore(store);
+      const artifact = store.getArtifact(recordingId);
+      if (!artifact) return res.status(404).json({ success: false, error: 'Recording upload session not found' });
+      if (!matchesScope(req, artifact)) return res.status(403).json({ success: false, error: 'Forbidden' });
+      const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
+      if (!bytes.length) return res.status(400).json({ success: false, error: 'Recording upload body is required' });
+      await storeMeetingRecordingBytes({ config, artifact, bytes });
+      store.upsertArtifact({
+        ...artifact,
+        status: 'uploaded',
+        uploadedBytes: bytes.length,
+        uploadedChecksumSha256: sha256(bytes),
+        uploadedAtUtc: new Date().toISOString(),
+      });
+      store.audit({
+        eventType: 'meeting_recording_uploaded',
+        tenantId: artifact.tenantId,
+        userId: artifact.userId,
+        source: SOURCES.conference,
+        metadata: { meetingId: artifact.meetingId, requestId: artifact.requestId, recordingId },
+      });
+      await store.save();
+      return res.json({ success: true, ok: true, recordingId, status: 'uploaded' });
+    } catch (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.post('/v1/meeting/recording/complete', async (req, res) => {
+    const request = req.body || {};
+    const recordingId = stringField(request, 'recordingId', 'RecordingId');
+    const scope = deriveScope(req, res, {
+      tenantId: request.tenantId || request.TenantId || '',
+      userId: request.userId || request.UserId || req.headers['x-user-id'] || unboundOwnerEmail(req, request),
+    });
+    if (!scope) return undefined;
+    if (!recordingId) return res.status(400).json({ success: false, error: 'recordingId is required' });
+    try {
+      await refreshStore(store);
+      const artifact = store.getArtifact(recordingId);
+      if (!artifact) return res.status(404).json({ success: false, error: 'Recording upload session not found' });
+      if (artifact.tenantId !== scope.tenantId || artifact.userId !== scope.userId) {
+        return res.status(403).json({ success: false, error: 'Forbidden' });
+      }
+      if (artifact.status !== 'uploaded' && artifact.status !== 'accepted') {
+        return res.status(409).json({ success: false, error: 'Recording bytes have not been uploaded.' });
+      }
+      const requestedSize = numberField(request, 'sizeBytes', 'SizeBytes');
+      if (requestedSize && artifact.uploadedBytes && requestedSize !== artifact.uploadedBytes) {
+        return res.status(409).json({ success: false, error: 'Recording upload size does not match completed size.' });
+      }
+      const requestedChecksum = stringField(request, 'checksumSha256', 'ChecksumSha256');
+      if (requestedChecksum && artifact.uploadedChecksumSha256 && requestedChecksum !== artifact.uploadedChecksumSha256) {
+        return res.status(409).json({ success: false, error: 'Recording upload checksum does not match completed checksum.' });
+      }
+      const receipt = operationReceipt('recording', recordingId);
+      store.upsertArtifact({
+        ...artifact,
+        status: 'accepted',
+        completedAtUtc: receipt.acceptedAtUtc,
+        completedSizeBytes: numberField(request, 'sizeBytes', 'SizeBytes') || artifact.uploadedBytes || 0,
+        completedChecksumSha256: stringField(request, 'checksumSha256', 'ChecksumSha256') || artifact.checksumSha256 || '',
+        receipt,
+      });
+      store.audit({
+        eventType: 'meeting_recording_completed',
+        tenantId: scope.tenantId,
+        userId: scope.userId,
+        source: SOURCES.conference,
+        metadata: { meetingId: artifact.meetingId, requestId: artifact.requestId, recordingId },
+      });
+      await store.save();
+      return res.json({
+        success: true,
+        ok: true,
+        recordingId,
+        receiptId: receipt.receiptId,
+        status: receipt.status,
+        message: receipt.message,
+        acceptedAtUtc: receipt.acceptedAtUtc,
+      });
+    } catch (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   app.post('/v1/search', async (req, res) => {
     const { tenantId: bodyTenant, userId: bodyUser, query, sources, filters, limit } = req.body || {};
     const scope = deriveScope(req, res, { tenantId: bodyTenant, userId: bodyUser });
@@ -789,6 +958,303 @@ export async function createApp(config) {
   });
 
   return app;
+}
+
+async function handleMeetingArchiveOperation({ req, res, config, store, searchEngine, operation }) {
+  const envelope = req.body || {};
+  const archive = envelope.archive || envelope.Archive || envelope;
+  const scope = deriveScope(req, res, {
+    tenantId: archive.tenantId || archive.TenantId || envelope.tenantId || envelope.TenantId || req.headers['x-tenant-id'] || '',
+    userId: archive.userId || archive.UserId || envelope.userId || envelope.UserId || req.headers['x-user-id'] || unboundOwnerEmail(req, archive),
+  });
+  if (!scope) return undefined;
+  const { tenantId, userId } = scope;
+  if (!tenantId || !userId) {
+    return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+  }
+  if (!meetingSourceAllowed({ req, config, tenantId, userId })) {
+    return res.status(403).json({ success: false, error: 'Source is not enabled for this user: conference_bridge' });
+  }
+
+  const meetingId = stringField(archive, 'meetingId', 'MeetingId');
+  const requestId = stringField(archive, 'requestId', 'RequestId') || meetingId;
+  if (!meetingId || !requestId) {
+    return res.status(400).json({ success: false, error: 'archive.meetingId and archive.requestId are required' });
+  }
+
+  try {
+    await refreshStore(store);
+    const document = meetingArchiveDocument({ tenantId, userId, archive, artifacts: envelope.artifacts || envelope.Artifacts || [] });
+    await searchEngine.indexDocuments([document], { chunker: createChunks });
+    const receipt = operationReceipt(operation, `${tenantId}:${userId}:${meetingId}:${requestId}`);
+    store.audit({
+      eventType: operation === 'archive' ? 'meeting_archive_accepted' : 'meeting_ingest_accepted',
+      tenantId,
+      userId,
+      source: SOURCES.conference,
+      metadata: {
+        meetingId,
+        requestId,
+        documentId: document.id,
+        receiptId: receipt.receiptId,
+        selectedSourceScopes: archive.selectedSourceScopes || archive.SelectedSourceScopes || [],
+        securityLabels: archive.securityLabels || archive.SecurityLabels || [],
+      },
+    });
+    await store.save();
+    return res.status(202).json({
+      success: true,
+      ok: true,
+      id: receipt.receiptId,
+      receiptId: receipt.receiptId,
+      [`${operation}Id`]: receipt.receiptId,
+      status: receipt.status,
+      message: receipt.message,
+      acceptedAtUtc: receipt.acceptedAtUtc,
+      documentId: document.id,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+function meetingArchiveDocument({ tenantId, userId, archive, artifacts }) {
+  const meetingId = stringField(archive, 'meetingId', 'MeetingId');
+  const requestId = stringField(archive, 'requestId', 'RequestId') || meetingId;
+  const transcript = arrayField(archive, 'transcript', 'Transcript').join('\n');
+  const artifactText = Array.isArray(artifacts)
+    ? artifacts.map((artifact) => [
+      stringField(artifact, 'kind', 'Kind'),
+      stringField(artifact, 'inlineContent', 'InlineContent'),
+      stringField(artifact, 'uri', 'Uri'),
+    ].filter(Boolean).join('\n')).filter(Boolean).join('\n\n')
+    : '';
+  const actionItems = arrayField(archive, 'actionItems', 'ActionItems');
+  const pendingQuestions = arrayField(archive, 'pendingQuestions', 'PendingQuestions');
+  const decisionLog = arrayField(archive, 'decisionLog', 'DecisionLog');
+  const participants = arrayField(archive, 'participants', 'Participants');
+  const participantContexts = arrayField(archive, 'participantContexts', 'ParticipantContexts');
+  const knowledgeReferences = arrayField(archive, 'knowledgeReferences', 'KnowledgeReferences');
+  const instructions = arrayField(archive, 'instructions', 'Instructions');
+  const summary = stringField(archive, 'summary', 'Summary')
+    || oneLine(transcript || artifactText || `Meeting ${meetingId}`);
+  const title = `Meeting Archive: ${summary}`;
+  const body = [
+    `Meeting ID: ${meetingId}`,
+    `Request ID: ${requestId}`,
+    `Meet URL: ${stringField(archive, 'meetUrl', 'MeetUrl')}`,
+    `Owner: ${stringField(archive, 'ownerDisplayName', 'OwnerDisplayName')} ${stringField(archive, 'ownerEmail', 'OwnerEmail')}`,
+    `Bot: ${stringField(archive, 'botDisplayName', 'BotDisplayName')}`,
+    `Agenda: ${stringField(archive, 'agenda', 'Agenda')}`,
+    `Active participant: ${stringField(archive, 'activeParticipant', 'ActiveParticipant')} ${stringField(archive, 'activeParticipantId', 'ActiveParticipantId')}`,
+    `Participants: ${participants.map(displayValue).join(', ')}`,
+    `Action items: ${actionItems.map(displayValue).join('; ')}`,
+    `Pending questions: ${pendingQuestions.map(displayValue).join('; ')}`,
+    `Decisions: ${decisionLog.map(displayValue).join('; ')}`,
+    `Instructions: ${instructions.map(displayValue).join('; ')}`,
+    `Knowledge references: ${knowledgeReferences.map(displayValue).join('; ')}`,
+    `Participant contexts: ${participantContexts.map(displayValue).join('; ')}`,
+    transcript,
+    artifactText,
+  ].filter(Boolean).join('\n\n');
+
+  return createDocument({
+    tenantId,
+    userId,
+    source: SOURCES.conference,
+    sourceId: `meeting:${meetingId}`,
+    sourceUri: stringField(archive, 'meetUrl', 'MeetUrl') || `atlas-meeting://${meetingId}`,
+    title,
+    summary,
+    body,
+    author: stringField(archive, 'ownerDisplayName', 'OwnerDisplayName') || stringField(archive, 'ownerEmail', 'OwnerEmail') || userId,
+    timestamp: stringField(archive, 'archivedAtUtc', 'ArchivedAtUtc') || new Date().toISOString(),
+    container: 'meeting-archives',
+    metadata: {
+      kind: 'meeting_archive',
+      meetingId,
+      requestId,
+      meetUrl: stringField(archive, 'meetUrl', 'MeetUrl'),
+      ownerEmail: stringField(archive, 'ownerEmail', 'OwnerEmail') || userId,
+      ownerDisplayName: stringField(archive, 'ownerDisplayName', 'OwnerDisplayName'),
+      botDisplayName: stringField(archive, 'botDisplayName', 'BotDisplayName'),
+      participationState: archive.participationState ?? archive.ParticipationState,
+      activeParticipantId: stringField(archive, 'activeParticipantId', 'ActiveParticipantId'),
+      effectiveSearchParticipantId: stringField(archive, 'effectiveSearchParticipantId', 'EffectiveSearchParticipantId'),
+      selectedSourceScopes: arrayField(archive, 'selectedSourceScopes', 'SelectedSourceScopes'),
+      securityLabels: arrayField(archive, 'securityLabels', 'SecurityLabels'),
+      policy: archive.policy || archive.Policy || {},
+      participantHints: arrayField(archive, 'participantHints', 'ParticipantHints'),
+      participants,
+      actionItems,
+      pendingQuestions,
+      decisionLog,
+      relatedArtifacts: arrayField(archive, 'relatedArtifacts', 'RelatedArtifacts'),
+      knowledgeReferences,
+      recording: archive.recording || archive.Recording || null,
+      artifactKinds: Array.isArray(artifacts) ? artifacts.map((artifact) => stringField(artifact, 'kind', 'Kind')).filter(Boolean) : [],
+    },
+    children: [
+      ...transcriptSegments(transcript),
+      ...actionItems.map((item, index) => ({ kind: 'action_item', title: `Action ${index + 1}`, text: displayValue(item), metadata: { index } })),
+      ...pendingQuestions.map((item, index) => ({ kind: 'pending_question', title: `Question ${index + 1}`, text: displayValue(item), metadata: { index } })),
+      ...decisionLog.map((item, index) => ({ kind: 'decision', title: `Decision ${index + 1}`, text: displayValue(item), metadata: { index } })),
+    ],
+  });
+}
+
+function transcriptSegments(transcript) {
+  return String(transcript || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 500)
+    .map((line, index) => {
+      const [speaker, ...rest] = line.includes(':') ? line.split(':') : ['', line];
+      return {
+        kind: 'transcript_segment',
+        title: speaker || `Turn ${index + 1}`,
+        text: rest.join(':').trim() || line,
+        metadata: { index, speaker: speaker || '' },
+      };
+    });
+}
+
+function meetingSourceAllowed({ req, config, tenantId, userId }) {
+  const allowed = allowedSourcesOf(req);
+  if (Array.isArray(allowed) && !allowed.includes(SOURCES.conference) && !allowed.includes('*')) return false;
+  return sourceAllowed(config, tenantId, userId, SOURCES.conference);
+}
+
+function unboundOwnerEmail(req, payload) {
+  if (req.identity?.bound) return '';
+  return stringField(payload, 'ownerEmail', 'OwnerEmail');
+}
+
+function operationReceipt(operation, key) {
+  return {
+    receiptId: stableId(operation, key),
+    status: 'accepted',
+    message: `${operation} accepted`,
+    acceptedAtUtc: new Date().toISOString(),
+  };
+}
+
+function stableId(prefix, ...parts) {
+  return `${prefix}_${hashQuery(parts.join(':')).replace(/^q_/, '')}`;
+}
+
+function stringField(value, ...names) {
+  for (const name of names) {
+    const entry = value?.[name];
+    if (entry !== undefined && entry !== null && String(entry).trim()) return String(entry);
+  }
+  return '';
+}
+
+function numberField(value, ...names) {
+  for (const name of names) {
+    const entry = Number(value?.[name]);
+    if (Number.isFinite(entry)) return entry;
+  }
+  return 0;
+}
+
+function arrayField(value, ...names) {
+  for (const name of names) {
+    const entry = value?.[name];
+    if (Array.isArray(entry)) return entry;
+    if (entry !== undefined && entry !== null && String(entry).trim()) return [entry];
+  }
+  return [];
+}
+
+function displayValue(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return [
+    value.displayName || value.DisplayName,
+    value.identityHint || value.IdentityHint,
+    value.title || value.Title,
+    value.summary || value.Summary,
+    value.content || value.Content,
+    value.text || value.Text,
+    value.uri || value.Uri,
+  ].filter(Boolean).join(' ') || JSON.stringify(value);
+}
+
+function recordingExtension(request) {
+  const fileName = stringField(request, 'fileName', 'FileName');
+  const fromFile = path.extname(fileName || '');
+  if (fromFile) return fromFile;
+  const contentType = stringField(request, 'contentType', 'ContentType').toLowerCase();
+  if (contentType.includes('wav')) return '.wav';
+  if (contentType.includes('webm')) return '.webm';
+  if (contentType.includes('mp4')) return '.mp4';
+  return '.bin';
+}
+
+function meetingRecordingStorage(config, recordingId, extension) {
+  const safeExtension = extension || '.bin';
+  const blobName = `meeting-recordings/${recordingId}${safeExtension}`;
+  if (config.artifacts?.azureStorageConnectionString && config.artifacts?.container) {
+    const publicBase = config.artifacts?.publicBaseUrl || '';
+    return {
+      backend: 'azure_blob',
+      blobName,
+      objectPath: '',
+      recordingUri: publicBase
+        ? `${publicBase.replace(/\/+$/, '')}/${blobName}`
+        : `azure-blob://${config.artifacts.container}/${blobName}`,
+    };
+  }
+  const objectPath = path.join(config.dataDir, 'meeting-recordings', `${recordingId}${safeExtension}`);
+  return {
+    backend: 'local',
+    blobName: '',
+    objectPath,
+    recordingUri: `atlas-meeting-recording://${recordingId}`,
+  };
+}
+
+async function storeMeetingRecordingBytes({ config, artifact, bytes }) {
+  if (artifact.storageBackend === 'azure_blob') {
+    const service = BlobServiceClient.fromConnectionString(config.artifacts.azureStorageConnectionString);
+    const container = service.getContainerClient(config.artifacts.container);
+    await container.createIfNotExists();
+    const blob = container.getBlockBlobClient(artifact.blobName);
+    await blob.uploadData(bytes, {
+      blobHTTPHeaders: {
+        blobContentType: artifact.contentType || 'application/octet-stream',
+      },
+      metadata: {
+        tenantId: safeBlobMetadata(artifact.tenantId),
+        userId: safeBlobMetadata(artifact.userId),
+        meetingId: safeBlobMetadata(artifact.meetingId),
+        requestId: safeBlobMetadata(artifact.requestId),
+      },
+    });
+    return;
+  }
+  await mkdir(path.dirname(artifact.objectPath), { recursive: true });
+  await writeFile(artifact.objectPath, bytes);
+}
+
+function sha256(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function safeBlobMetadata(value) {
+  return String(value || '').replace(/[^\w.-]/g, '_').slice(0, 256);
+}
+
+function absoluteUrl(req, pathname) {
+  const configured = req.app?.locals?.config?.publicBaseUrl || '';
+  if (configured) return `${configured.replace(/\/+$/, '')}${pathname}`;
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  return `${proto}://${host}${pathname}`;
 }
 
 async function refreshStore(store) {
