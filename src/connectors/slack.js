@@ -14,7 +14,7 @@ export class SlackConnector {
 
   isConfigured(scope = {}) {
     const credentials = this.credentials(scope);
-    return Boolean(credentials.botToken && credentials.channelIds?.length);
+    return Boolean(credentials.botToken);
   }
 
   requirements(scope = {}) {
@@ -54,8 +54,19 @@ export class SlackConnector {
     if (options.fixtures) return options.fixtures.map((item) => slackFixtureToDocument({ tenantId, userId, item }));
     const scope = { tenantId, userId };
     if (!this.isConfigured(scope)) throw new Error('Slack connector is not configured');
+    if (options.eventPayload) {
+      const document = await this.eventDocument({ tenantId, userId, event: options.eventPayload, scope });
+      return document ? [document] : [];
+    }
     const credentials = this.credentials(scope);
-    const channelIds = options.channelIds?.length ? options.channelIds : credentials.channelIds;
+    const channelIds = options.channelIds?.length
+      ? options.channelIds
+      : credentials.channelIds.length
+        ? credentials.channelIds
+        : await this.discoverMemberChannels(scope);
+    if (!channelIds.length) {
+      throw new Error('Slack app is not a member of any readable channels');
+    }
     const documents = [];
     for (const channelId of channelIds) {
       const key = checkpointKey(this.source, tenantId, userId, `channel:${channelId}`);
@@ -100,6 +111,42 @@ export class SlackConnector {
     return items;
   }
 
+  async discoverMemberChannels(scope = {}) {
+    const channels = await this.paginate('conversations.list', {
+      exclude_archived: 'true',
+      limit: '200',
+      types: 'public_channel,private_channel',
+    }, 'channels', scope);
+    return channels.filter((channel) => channel.is_member).map((channel) => channel.id);
+  }
+
+  async eventDocument({ tenantId, userId, event, scope }) {
+    const message = normalizeSlackEventMessage(event);
+    if (!message?.ts || !event.channel || !message.text) return null;
+    const channel = await this.call('conversations.info', { channel: event.channel }, scope)
+      .then((data) => data.channel)
+      .catch(() => ({ id: event.channel, name: event.channel }));
+    const replies = message.thread_ts
+      ? await this.paginate('conversations.replies', {
+        channel: event.channel,
+        ts: message.thread_ts,
+        limit: '200',
+      }, 'messages', scope)
+      : [];
+    const permalink = await this.call('chat.getPermalink', {
+      channel: event.channel,
+      message_ts: message.ts,
+    }, scope).then((data) => data.permalink).catch(() => '');
+    return slackMessageToDocument({
+      tenantId,
+      userId,
+      channel,
+      message,
+      replies,
+      permalink,
+    });
+  }
+
   async call(method, params, scope = {}) {
     const credentials = this.credentials(scope);
     const response = await fetch(`${SLACK_API_BASE}/${method}`, {
@@ -126,6 +173,12 @@ export class SlackConnector {
 
 function list(value) {
   return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeSlackEventMessage(event = {}) {
+  if (event.subtype === 'message_changed') return event.message || null;
+  if (event.subtype === 'message_deleted') return null;
+  return event;
 }
 
 function slackFixtureToDocument({ tenantId, userId, item }) {

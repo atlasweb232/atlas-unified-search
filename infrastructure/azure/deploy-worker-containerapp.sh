@@ -78,6 +78,7 @@ append_value_env() {
 }
 
 append_secret_env "SLACK_BOT_TOKEN" "slack-bot-token"
+append_secret_env "CONNECTOR_CREDENTIAL_ENCRYPTION_KEY" "connector-credential-encryption-key"
 append_secret_env "GOOGLE_CLIENT_ID" "google-client-id"
 append_secret_env "GOOGLE_CLIENT_SECRET" "google-client-secret"
 append_secret_env "GOOGLE_REFRESH_TOKEN" "google-refresh-token"

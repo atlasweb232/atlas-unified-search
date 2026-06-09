@@ -441,6 +441,7 @@ export class SearchEngine {
         source: document.source,
         title: document.title,
         oneLine: document.summary || matchedChunk,
+        body: document.body || '',
         author: document.author,
         timestamp: document.timestamp,
         container: document.container,

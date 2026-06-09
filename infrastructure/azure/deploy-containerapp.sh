@@ -34,6 +34,7 @@ collect_production_env() {
   append_secret_env "SERVICE_BUS_CONNECTION_STRING" "unified-search-servicebus"
   append_secret_env "OPENAI_API_KEY" "openai-api-key"
   append_secret_env "SLACK_BOT_TOKEN" "slack-bot-token"
+  append_secret_env "CONNECTOR_CREDENTIAL_ENCRYPTION_KEY" "connector-credential-encryption-key"
   append_secret_env "GOOGLE_CLIENT_ID" "google-client-id"
   append_secret_env "GOOGLE_CLIENT_SECRET" "google-client-secret"
   append_secret_env "GOOGLE_REFRESH_TOKEN" "google-refresh-token"

@@ -1,5 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, ChevronDown, ChevronRight, FileDown, Loader2, RefreshCw, RotateCcw, Search, Send, Sparkles, Trash2 } from 'lucide-react';
+import {
+  Activity,
+  Bot,
+  BookOpen,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Database,
+  FileDown,
+  HardDrive,
+  Loader2,
+  Mail,
+  MessageSquare,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  Send,
+  Sparkles,
+  Trash2,
+  Video,
+  XCircle,
+} from 'lucide-react';
 import { apiRequest, apiStream, sourceMeta } from './api.js';
 
 const DEFAULT_SOURCES = ['email', 'slack', 'google_drive', 'conference_bridge', 'knowledge_base', 'data_fabric'];
@@ -11,6 +32,9 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
   const [selectedSources, setSelectedSources] = useState(new Set());
   const [query, setQuery] = useState('');
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('atlas_unified_search_auth_token') || '');
+  const [scope, setScope] = useState({ tenantId, userId });
+  const [connectionState, setConnectionState] = useState({});
+  const [observability, setObservability] = useState({ index: null, jobs: [], events: [] });
   const [run, setRun] = useState(null);
   const [results, setResults] = useState([]);
   const [expanded, setExpanded] = useState(new Set());
@@ -20,13 +44,51 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
   const [state, setState] = useState({ loading: false, error: '' });
   const [maintenance, setMaintenance] = useState({ source: '', busy: false, message: '' });
   const initializedSourceSelection = useRef(false);
+  const oauthPopup = useRef(null);
+  const pendingOAuthSource = useRef('');
 
   useEffect(() => {
     loadConnectors();
-  }, [apiBaseUrl, authToken]);
+  }, [apiBaseUrl, authToken, scope.tenantId, scope.userId]);
+
+  useEffect(() => {
+    const receiveOAuth = (event) => {
+      const apiOrigin = new URL(apiBaseUrl || window.location.origin, window.location.origin).origin;
+      if (![window.location.origin, apiOrigin].includes(event.origin) || event.data?.type !== 'atlas-unified-search-oauth') return;
+      const next = event.data;
+      saveAuthToken(next.token || '');
+      const nextScope = {
+        tenantId: next.tenantId || scope.tenantId,
+        userId: next.userId || scope.userId,
+      };
+      setScope(nextScope);
+      localStorage.setItem('atlas_unified_search_tenant_id', nextScope.tenantId);
+      localStorage.setItem('atlas_unified_search_user_id', nextScope.userId);
+      setConnectionState((current) => ({
+        ...current,
+        [pendingOAuthSource.current]: { status: 'connected', message: 'Connected' },
+      }));
+      oauthPopup.current = null;
+      pendingOAuthSource.current = '';
+    };
+    window.addEventListener('message', receiveOAuth);
+    return () => window.removeEventListener('message', receiveOAuth);
+  }, [apiBaseUrl, scope.tenantId, scope.userId]);
+
+  useEffect(() => {
+    if (!authToken || !scope.tenantId || !scope.userId) return undefined;
+    refreshObservability();
+    const timer = window.setInterval(refreshObservability, 5000);
+    return () => window.clearInterval(timer);
+  }, [authToken, scope.tenantId, scope.userId]);
 
   async function loadConnectors() {
     setState((current) => ({ ...current, error: '' }));
+    if (!authToken) {
+      setReadiness([]);
+      setSelectedSources(new Set());
+      return;
+    }
     try {
       const [connectorData, readinessData, setupData] = await Promise.all([
         apiRequest(apiBaseUrl, '/v1/connectors', { authToken }),
@@ -37,6 +99,15 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
       const checks = readinessData.checks || [];
       setReadiness(checks);
       setSetup(setupData.setup || []);
+      setConnectionState((current) => {
+        const next = { ...current };
+        for (const source of DEFAULT_SOURCES) {
+          const check = checks.find((item) => item.source === source);
+          if (check?.ready) next[source] = { status: 'connected', message: 'Connected' };
+          else if (authToken && check) next[source] = { status: 'failed', message: 'Connection failed' };
+        }
+        return next;
+      });
       setSelectedSources((current) => {
         const readySources = new Set(checks.filter((check) => check.ready).map((check) => check.source));
         if (!initializedSourceSelection.current) {
@@ -47,6 +118,24 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
       });
     } catch (error) {
       setState((current) => ({ ...current, error: error.message }));
+    }
+  }
+
+  async function refreshObservability() {
+    try {
+      const encodedScope = `tenantId=${encodeURIComponent(scope.tenantId)}&userId=${encodeURIComponent(scope.userId)}`;
+      const [indexData, jobData, auditData] = await Promise.all([
+        apiRequest(apiBaseUrl, `/v1/index/status?${encodedScope}`, { authToken }),
+        apiRequest(apiBaseUrl, `/v1/jobs?${encodedScope}`, { authToken }),
+        apiRequest(apiBaseUrl, `/v1/audit?${encodedScope}&limit=12`, { authToken }),
+      ]);
+      setObservability({
+        index: indexData.index || null,
+        jobs: (jobData.jobs || []).slice(0, 6),
+        events: (auditData.events || []).slice(0, 8),
+      });
+    } catch (error) {
+      setObservability((current) => ({ ...current, error: error.message }));
     }
   }
 
@@ -85,18 +174,86 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
     if (authToken) return scheduleRefresh(authToken);
   }, [authToken, scheduleRefresh]);
 
-  function signInWithSlack() {
-    window.location.href = `${apiBaseUrl}/v1/onboarding/oauth/slack/start?redirect=1`;
+  function openOAuth(source) {
+    const provider = source === 'slack' ? 'slack' : 'gdrive';
+    const width = 620;
+    const height = 760;
+    const left = Math.max(0, window.screenX + (window.outerWidth - width) / 2);
+    const top = Math.max(0, window.screenY + (window.outerHeight - height) / 2);
+    pendingOAuthSource.current = source;
+    setConnectionState((current) => ({
+      ...current,
+      [source]: { status: 'connecting', message: 'Connecting...' },
+    }));
+    const popup = window.open(
+      `${apiBaseUrl}/v1/onboarding/oauth/${provider}/start?redirect=1&returnTo=${encodeURIComponent(window.location.origin)}`,
+      `atlas-${provider}-oauth`,
+      `popup=yes,width=${width},height=${height},left=${left},top=${top}`,
+    );
+    oauthPopup.current = popup;
+    if (!popup) {
+      setConnectionState((current) => ({
+        ...current,
+        [source]: { status: 'failed', message: 'Connection failed: popup blocked' },
+      }));
+      return;
+    }
+    const closedTimer = window.setInterval(() => {
+      if (!popup.closed) return;
+      window.clearInterval(closedTimer);
+      if (pendingOAuthSource.current === source) {
+        setConnectionState((current) => ({
+          ...current,
+          [source]: { status: 'failed', message: 'Connection failed' },
+        }));
+        pendingOAuthSource.current = '';
+      }
+    }, 500);
   }
 
-  function signInWithGoogle() {
-    window.location.href = `${apiBaseUrl}/v1/onboarding/oauth/gdrive/start?redirect=1`;
+  const signInWithSlack = () => openOAuth('slack');
+  const signInWithGoogle = () => openOAuth('google_drive');
+
+  async function connectSource(source) {
+    if (source === 'slack' || source === 'google_drive') {
+      openOAuth(source);
+      return;
+    }
+    if (!authToken) {
+      setConnectionState((current) => ({
+        ...current,
+        [source]: { status: 'failed', message: 'Connection failed: sign in first' },
+      }));
+      return;
+    }
+    setConnectionState((current) => ({
+      ...current,
+      [source]: { status: 'connecting', message: 'Checking connection...' },
+    }));
+    try {
+      const data = await apiRequest(apiBaseUrl, `/v1/connectors/readiness?source=${encodeURIComponent(source)}`, { authToken });
+      const check = data.checks?.find((item) => item.source === source);
+      setConnectionState((current) => ({
+        ...current,
+        [source]: check?.ready
+          ? { status: 'connected', message: 'Connected' }
+          : { status: 'failed', message: 'Connection failed' },
+      }));
+      await loadConnectors();
+    } catch (error) {
+      setConnectionState((current) => ({
+        ...current,
+        [source]: { status: 'failed', message: 'Connection failed' },
+      }));
+    }
   }
 
   function signOut() {
     saveAuthToken('');
     localStorage.removeItem('atlas_unified_search_tenant_id');
     localStorage.removeItem('atlas_unified_search_user_id');
+    setConnectionState({});
+    setObservability({ index: null, jobs: [], events: [] });
   }
 
   const isSignedIn = Boolean(authToken);
@@ -115,8 +272,8 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
         method: 'POST',
         authToken,
         body: JSON.stringify({
-          tenantId,
-          userId,
+          tenantId: scope.tenantId,
+          userId: scope.userId,
           query,
           sources: [...selectedSources],
           wait: false,
@@ -132,7 +289,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
   }
 
   async function streamSearchRun(searchRunId) {
-    const path = `/v1/search-runs/${encodeURIComponent(searchRunId)}/events?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(userId)}`;
+    const path = `/v1/search-runs/${encodeURIComponent(searchRunId)}/events?tenantId=${encodeURIComponent(scope.tenantId)}&userId=${encodeURIComponent(scope.userId)}`;
     await apiStream(apiBaseUrl, path, { authToken }, ({ event, data }) => {
       if (event === 'error' || event === 'timeout') throw new Error(data.error || 'Search stream failed');
       if (!data.searchRun) return;
@@ -146,18 +303,22 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
   }
 
   async function runAssistant(actionType) {
-    if (!run || selectedResults.size === 0) return;
+    if (!run || results.length === 0) return;
+    const resultIds = actionType === 'summarize'
+      ? results.map((result) => result.id)
+      : [...selectedResults];
+    if (!resultIds.length) return;
     setState((current) => ({ ...current, error: '' }));
     try {
       const data = await apiRequest(apiBaseUrl, '/v1/assistant/actions', {
         method: 'POST',
         authToken,
         body: JSON.stringify({
-          tenantId,
-          userId,
+          tenantId: scope.tenantId,
+          userId: scope.userId,
           searchRunId: run.id,
           actionType,
-          selectedResultIds: [...selectedResults],
+          selectedResultIds: resultIds,
           prompt: assistantPrompt,
         }),
       });
@@ -201,9 +362,10 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
       const data = await apiRequest(apiBaseUrl, `/v1/sync/${source}`, {
         method: 'POST',
         authToken,
-        body: JSON.stringify({ tenantId, userId, wait: false }),
+        body: JSON.stringify({ tenantId: scope.tenantId, userId: scope.userId, wait: false }),
       });
       setMaintenance({ source, busy: false, message: `Queued ${sourceMeta[source]?.label || source}: ${data.job?.id || 'job accepted'}` });
+      await refreshObservability();
     } catch (error) {
       setMaintenance({ source, busy: false, message: error.message });
     }
@@ -216,12 +378,13 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
       const data = await apiRequest(apiBaseUrl, `/v1/reindex/${source}`, {
         method: 'POST',
         authToken,
-        body: JSON.stringify({ tenantId, userId, wait: false }),
+        body: JSON.stringify({ tenantId: scope.tenantId, userId: scope.userId, wait: false }),
       });
       setMaintenance({ source, busy: false, message: `Reindex queued after deleting ${data.deleted || 0} document(s).` });
       const removedResultIds = new Set(results.filter((result) => result.source === source).map((result) => result.id));
       setResults((current) => current.filter((result) => result.source !== source));
       setSelectedResults((current) => new Set([...current].filter((id) => !removedResultIds.has(id))));
+      await refreshObservability();
     } catch (error) {
       setMaintenance({ source, busy: false, message: error.message });
     }
@@ -234,12 +397,13 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
       const data = await apiRequest(apiBaseUrl, `/v1/sources/${source}/documents`, {
         method: 'DELETE',
         authToken,
-        body: JSON.stringify({ tenantId, userId, resetCheckpoints: true }),
+        body: JSON.stringify({ tenantId: scope.tenantId, userId: scope.userId, resetCheckpoints: true }),
       });
       setMaintenance({ source, busy: false, message: `Deleted ${data.deleted || 0} document(s).` });
       const removedResultIds = new Set(results.filter((result) => result.source === source).map((result) => result.id));
       setResults((current) => current.filter((result) => result.source !== source));
       setSelectedResults((current) => new Set([...current].filter((id) => !removedResultIds.has(id))));
+      await refreshObservability();
     } catch (error) {
       setMaintenance({ source, busy: false, message: error.message });
     }
@@ -252,16 +416,16 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
           <Sparkles size={22} />
           <div>
             <strong>Atlas Search</strong>
-            <span>{tenantId} / {userId}</span>
+            <span>{scope.tenantId} / {scope.userId}</span>
           </div>
         </div>
         {isSignedIn ? (
           <div className="auth-status">
-            <span className="auth-user">{userId}</span>
+            <span className="auth-user">{scope.userId}</span>
             <button type="button" className="secondary-button" onClick={signOut}>Sign out</button>
           </div>
         ) : (
-          <div className="signin-buttons">
+          <div className="signin-buttons obsolete-signin-buttons" aria-hidden="true">
             <button type="button" className="slack-signin-button" onClick={signInWithSlack}>
               <svg width="18" height="18" viewBox="0 0 54 54" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M19.712 33.842a4.286 4.286 0 0 1-4.286 4.286 4.286 4.286 0 0 1-4.286-4.286 4.286 4.286 0 0 1 4.286-4.286h4.286v4.286ZM21.855 33.842a4.286 4.286 0 0 1 4.286-4.286 4.286 4.286 0 0 1 4.286 4.286v10.715a4.286 4.286 0 0 1-4.286 4.286 4.286 4.286 0 0 1-4.286-4.286V33.842Z" fill="#E01E5A"/><path d="M26.141 19.712a4.286 4.286 0 0 1-4.286-4.286 4.286 4.286 0 0 1 4.286-4.286 4.286 4.286 0 0 1 4.286 4.286v4.286h-4.286ZM26.141 21.855a4.286 4.286 0 0 1 4.286 4.286 4.286 4.286 0 0 1-4.286 4.286H15.426a4.286 4.286 0 0 1-4.286-4.286 4.286 4.286 0 0 1 4.286-4.286h10.715Z" fill="#36C5F0"/><path d="M40.271 26.141a4.286 4.286 0 0 1 4.286 4.286 4.286 4.286 0 0 1-4.286 4.286 4.286 4.286 0 0 1-4.286-4.286v-4.286h4.286ZM38.128 26.141a4.286 4.286 0 0 1-4.286-4.286 4.286 4.286 0 0 1 4.286-4.286h10.715a4.286 4.286 0 0 1 4.286 4.286 4.286 4.286 0 0 1-4.286 4.286H38.128Z" fill="#2EB67D"/><path d="M33.842 40.271a4.286 4.286 0 0 1 4.286 4.286 4.286 4.286 0 0 1-4.286 4.286 4.286 4.286 0 0 1-4.286-4.286v-4.286h4.286ZM33.842 38.128a4.286 4.286 0 0 1 4.286-4.286 4.286 4.286 0 0 1 4.286 4.286v10.715a4.286 4.286 0 0 1-4.286 4.286 4.286 4.286 0 0 1-4.286-4.286V38.128Z" fill="#ECB22E"/></svg>
               Sign in with Slack
@@ -272,71 +436,82 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
             </button>
           </div>
         )}
-        <button type="button" className="secondary-button" onClick={loadConnectors}>
-          <RefreshCw size={15} />
-          Refresh
-        </button>
+        {!isSignedIn && <p className="auth-hint">Choose Slack or Google Drive below to sign in without leaving this page.</p>}
         <h2>Connectors</h2>
         <div className="connector-list">
           {DEFAULT_SOURCES.map((source) => {
-            const connector = connectors.find((item) => item.source === source);
             const check = readinessBySource[source];
-            const setupGuide = setupBySource[source];
-            const status = sourceStatuses[source];
-            const liveBlocked = isLiveCredentialBlocked(source, check);
-            const selectable = canSelectSource(check);
+            const connection = connectionState[source] || {};
+            const connected = connection.status === 'connected' || check?.ready;
+            const selected = connected && selectedSources.has(source);
             return (
-              <div key={source} data-testid={`connector-${source}`} className={`connector-card ${check?.ready ? 'ready' : ''} ${liveBlocked ? 'blocked' : ''}`}>
-                <label className="connector-row">
-                  <input
-                    data-testid={`source-toggle-${source}`}
-                    type="checkbox"
-                    checked={selectable && selectedSources.has(source)}
-                    onChange={() => toggleSource(source)}
-                    disabled={!selectable}
-                    title={selectable ? 'Include this source in search' : 'Source is unavailable until readiness passes'}
-                  />
-                  <span className="source-icon">{sourceMeta[source]?.icon || 'SRC'}</span>
-                  <span className="connector-main">
+              <div key={source} data-testid={`connector-${source}`} className={`connector-tile ${connected ? 'ready' : ''} ${selected ? 'selected' : ''}`}>
+                <button
+                  type="button"
+                  data-testid={`connector-button-${source}`}
+                  className="connector-button"
+                  onClick={() => connected ? toggleSource(source) : connectSource(source)}
+                  aria-pressed={selected}
+                >
+                  <SourceIcon source={source} />
+                  <span className="connector-copy">
                     <strong>{sourceMeta[source]?.label || source}</strong>
-                    <small>{connectorStatusLabel(source, check, connector, status)}</small>
-                    <span className={`mode-badge ${connector?.vectorizationMode === 'external_federated' ? 'federated' : 'indexed'}`}>
-                      {connector?.vectorizationMode === 'external_federated' ? 'Federated vector space' : 'Indexed here'}
-                    </span>
+                    <small>{connected ? (selected ? 'Included in search' : 'Click to include') : connectorPrompt(source)}</small>
                   </span>
-                </label>
-                <div className="connector-actions">
-                  <button type="button" title="Sync source" onClick={() => syncSource(source)} disabled={maintenance.busy || !check?.ready}>
-                    <RefreshCw size={14} />
-                  </button>
-                  <button type="button" title="Reset and reindex source" onClick={() => reindexSource(source)} disabled={maintenance.busy || !check?.ready}>
-                    <RotateCcw size={14} />
-                  </button>
-                  <button type="button" title="Delete indexed source data" onClick={() => clearSource(source)} disabled={maintenance.busy}>
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-                {Boolean(check?.requirements?.length) && (
-                  <div className="requirements">
-                    {check.requirements.map((requirement) => (
-                      <span key={`${source}-${requirement.name}`} className={requirement.configured ? 'ok' : ''}>{requirement.name}</span>
-                    ))}
+                  {selected && <CheckCircle2 className="selected-check" size={17} />}
+                  <span className={`connection-status ${connected ? 'connected' : connection.status || 'idle'}`}>
+                    {connectionStatusText(connection, connected)}
+                  </span>
+                </button>
+                <input data-testid={`source-toggle-${source}`} type="checkbox" checked={selected} onChange={() => toggleSource(source)} hidden />
+                {connected && (
+                  <div className="connector-actions">
+                    <button type="button" title="Sync source" onClick={() => syncSource(source)} disabled={maintenance.busy}><RefreshCw size={14} /></button>
+                    <button type="button" title="Reset and reindex source" onClick={() => reindexSource(source)} disabled={maintenance.busy}><RotateCcw size={14} /></button>
+                    <button type="button" title="Delete indexed source data" onClick={() => clearSource(source)} disabled={maintenance.busy}><Trash2 size={14} /></button>
                   </div>
-                )}
-                {setupGuide && !setupGuide.ready && (
-                  <p className="setup-hint">{setupGuide.nextAction}</p>
-                )}
-                {liveBlocked && (
-                  <p className="setup-hint auth-boundary">This source is unavailable for search, sync, and reindex until live authentication passes readiness.</p>
-                )}
-                {setupGuide?.ready && setupGuide.vectorizationBoundary && (
-                  <p className="setup-hint">{setupGuide.vectorizationBoundary}</p>
                 )}
               </div>
             );
           })}
         </div>
         {maintenance.message && <div className="maintenance-message">{maintenance.message}</div>}
+        <section className="vector-log" aria-label="Vectorization activity">
+          <div className="section-title">
+            <Activity size={16} />
+            <h2>Vectorization Activity</h2>
+            <button type="button" title="Refresh activity" onClick={refreshObservability} disabled={!isSignedIn}><RefreshCw size={13} /></button>
+          </div>
+          {!isSignedIn && <p className="log-empty">Connect a source to view indexing logs.</p>}
+          {isSignedIn && observability.error && <p className="log-error">{observability.error}</p>}
+          {isSignedIn && observability.index && (
+            <div className="index-summary">
+              <span><strong>{observability.index.documents || 0}</strong> documents</span>
+              <span><strong>{observability.index.chunks || 0}</strong> chunks</span>
+            </div>
+          )}
+          {isSignedIn && Object.entries(observability.index?.bySource || {}).map(([source, counts]) => (
+            <div className="source-count" key={source}>
+              <SourceIcon source={source} size={14} />
+              <span>{sourceMeta[source]?.label || source}</span>
+              <strong>{displayCount(counts)}</strong>
+            </div>
+          ))}
+          {isSignedIn && observability.jobs.map((job) => (
+            <div className="activity-entry" key={job.id}>
+              <span className={`job-dot ${job.status || ''}`} />
+              <span>{sourceMeta[job.source]?.label || job.source || job.type}</span>
+              <small>{job.status} · {formatDate(job.updatedAt || job.createdAt)}</small>
+            </div>
+          ))}
+          {isSignedIn && observability.events.map((event) => (
+            <div className="activity-entry audit-entry" key={event.id}>
+              <span className="job-dot event" />
+              <span>{event.eventType || event.action || 'activity'}</span>
+              <small>{formatDate(event.createdAt || event.timestamp)}</small>
+            </div>
+          ))}
+        </section>
       </aside>
 
       <main className="result-panel">
@@ -365,24 +540,28 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
                 <button type="button" data-testid="result-expand" className="expand" onClick={() => toggleExpanded(result.id)}>
                   {expanded.has(result.id) ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                 </button>
-                <span className="source-icon">{sourceMeta[result.source]?.icon || result.sourceIcon || 'SRC'}</span>
+                <SourceIcon source={result.source} />
                 <div className="result-main">
-                  <div className="meta">
-                    <span>{result.sourceLabel || sourceMeta[result.source]?.label}</span>
-                    <span>{displayValue(result.container)}</span>
-                    <span>{displayValue(result.author)}</span>
+                  <div className="result-header">
+                    <strong>{displayValue(result.author) || 'Unknown sender'}</strong>
                     <span>{formatDate(result.timestamp)}</span>
-                    <span>{Math.round((result.score || 0) * 100)}%</span>
                   </div>
-                  <strong>{displayValue(result.title)}</strong>
-                  <p>{displayValue(result.oneLine)}</p>
+                  <div className="result-summary-row">
+                    <p>{displayValue(result.oneLine) || displayValue(result.title)}</p>
+                    <strong className="relevance">{formatRelevance(result.score)} relevant</strong>
+                  </div>
+                  <small className="result-context">{result.sourceLabel || sourceMeta[result.source]?.label} · {displayValue(result.container)}</small>
                 </div>
               </div>
               {expanded.has(result.id) && (
                 <div className="result-detail">
+                  <section className="message-body">
+                    <strong>{displayValue(result.title)}</strong>
+                    <p>{displayValue(result.body) || displayValue(result.oneLine) || 'No full message text was returned.'}</p>
+                  </section>
                   {Boolean(result.links?.length) && <Detail title="Links" items={result.links} />}
                   {Boolean(result.attachments?.length) && <Detail title="Attachments" items={result.attachments.map((item) => item.name || item.title || JSON.stringify(item))} />}
-                  {Boolean(result.children?.length) && <Detail title="Related context" items={result.children.map((item) => `${item.title || item.kind || 'item'}: ${item.text || item.summary || ''}`)} />}
+                  {Boolean(result.children?.length) && <Detail title="Thread" items={result.children.map((item) => `${item.author || item.title || item.kind || 'Reply'}: ${item.text || item.body || item.summary || ''}`)} />}
                 </div>
               )}
             </article>
@@ -401,15 +580,15 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
         </div>
         <textarea data-testid="assistant-prompt" value={assistantPrompt} onChange={(event) => setAssistantPrompt(event.target.value)} placeholder="Ask for a summary, briefing, comparison, or report..." />
         <div className="action-grid">
-          <button data-testid="assistant-summarize" onClick={() => runAssistant('summarize')} disabled={!run || selectedResults.size === 0}><Send size={15} />Summarize</button>
+          <button data-testid="assistant-summarize" onClick={() => runAssistant('summarize')} disabled={!run || results.length === 0}><Send size={15} />Summarize results</button>
           <button onClick={() => runAssistant('answer_question')} disabled={!run || selectedResults.size === 0}><Send size={15} />Ask</button>
           <button onClick={() => runAssistant('create_powerpoint')} disabled={!run || selectedResults.size === 0}><FileDown size={15} />PowerPoint</button>
           <button onClick={() => runAssistant('create_pdf')} disabled={!run || selectedResults.size === 0}><FileDown size={15} />PDF</button>
         </div>
         <div className="assistant-jobs">
           {assistantJobs.map((job) => (
-            <div key={job.id} className="job">
-              <strong>{job.actionType}</strong>
+            <div key={job.id} className={`job ${job.actionType === 'summarize' ? 'retrieval-summary' : ''}`}>
+              <strong>{job.actionType === 'summarize' ? 'Retrieval summary' : job.actionType}</strong>
               <small>{job.status}</small>
               <p>{job.responseText}</p>
               {Boolean(job.artifactIds?.length) && <small>Artifacts: {job.artifactIds.join(', ')}</small>}
@@ -428,6 +607,58 @@ function Detail({ title, items }) {
       {items.map((item, index) => <p key={`${title}-${index}`}>{String(item)}</p>)}
     </section>
   );
+}
+
+function SourceIcon({ source, size = 18 }) {
+  const props = { size, strokeWidth: 1.9 };
+  const icons = {
+    email: <Mail {...props} />,
+    slack: <SlackIcon size={size} />,
+    google_drive: <HardDrive {...props} />,
+    conference_bridge: <Video {...props} />,
+    knowledge_base: <BookOpen {...props} />,
+    data_fabric: <Database {...props} />,
+  };
+  return <span className={`source-icon source-${source}`}>{icons[source] || <MessageSquare {...props} />}</span>;
+}
+
+function SlackIcon({ size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="#36C5F0" d="M9.1 2a2.1 2.1 0 0 1 0 4.2H7V4.1A2.1 2.1 0 0 1 9.1 2Z" />
+      <path fill="#36C5F0" d="M9.1 7.3a2.1 2.1 0 0 1 0 4.2h-5a2.1 2.1 0 0 1 0-4.2h5Z" />
+      <path fill="#2EB67D" d="M22 9.1a2.1 2.1 0 0 1-4.2 0V7h2.1A2.1 2.1 0 0 1 22 9.1Z" />
+      <path fill="#2EB67D" d="M16.7 9.1a2.1 2.1 0 0 1-4.2 0v-5a2.1 2.1 0 0 1 4.2 0v5Z" />
+      <path fill="#ECB22E" d="M14.9 22a2.1 2.1 0 0 1 0-4.2H17v2.1a2.1 2.1 0 0 1-2.1 2.1Z" />
+      <path fill="#ECB22E" d="M14.9 16.7a2.1 2.1 0 0 1 0-4.2h5a2.1 2.1 0 0 1 0 4.2h-5Z" />
+      <path fill="#E01E5A" d="M2 14.9a2.1 2.1 0 0 1 4.2 0V17H4.1A2.1 2.1 0 0 1 2 14.9Z" />
+      <path fill="#E01E5A" d="M7.3 14.9a2.1 2.1 0 0 1 4.2 0v5a2.1 2.1 0 0 1-4.2 0v-5Z" />
+    </svg>
+  );
+}
+
+function connectorPrompt(source) {
+  if (source === 'slack') return 'Connect Slack';
+  if (source === 'google_drive') return 'Connect Google';
+  return 'Check connection';
+}
+
+function connectionStatusText(connection, connected) {
+  if (connected) return <><CheckCircle2 size={13} />Connected</>;
+  if (connection.status === 'connecting') return <><Loader2 className="spin" size={13} />Connecting</>;
+  if (connection.status === 'failed') return <><XCircle size={13} />Connection failed</>;
+  return 'Not connected';
+}
+
+function displayCount(value) {
+  if (typeof value === 'number') return value;
+  return value?.documents ?? value?.count ?? 0;
+}
+
+function formatRelevance(value) {
+  const score = Number(value || 0);
+  const normalized = score <= 1 ? score * 100 : score;
+  return `${Math.max(0, Math.min(100, Math.round(normalized)))}%`;
 }
 
 function formatDate(value) {

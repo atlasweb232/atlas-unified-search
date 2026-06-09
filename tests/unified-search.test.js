@@ -207,6 +207,88 @@ test('postgres store persists document and checkpoint deletes', async () => {
   assert.equal(store.pendingDeletedCheckpointKeys.size, 0);
 });
 
+test('postgres store only upserts documents and chunks changed since refresh', async () => {
+  const store = new PostgresSearchStore({ connectionString: 'postgres://example.invalid/test', ssl: false });
+  const queries = [];
+  store.pool = {
+    async connect() {
+      return {
+        async query(sql, params = []) {
+          queries.push({ sql, params });
+        },
+        release() {},
+      };
+    },
+  };
+  store.state.documents.existing = {
+    id: 'existing',
+    tenantId: 'atlasweb',
+    userId: 'rakib',
+    source: 'slack',
+  };
+  store.state.chunks.existing_chunk = {
+    id: 'existing_chunk',
+    documentId: 'existing',
+    tenantId: 'atlasweb',
+    userId: 'rakib',
+    source: 'slack',
+  };
+  store.upsertDocument({
+    id: 'changed',
+    tenantId: 'atlasweb',
+    userId: 'rakib',
+    source: 'slack',
+  }, [{
+    id: 'changed_chunk',
+    documentId: 'changed',
+    tenantId: 'atlasweb',
+    userId: 'rakib',
+    source: 'slack',
+    text: 'Realtime message',
+  }]);
+
+  await store.save();
+
+  const documentQueries = queries.filter((query) => query.sql.includes('INSERT INTO unified_documents'));
+  const chunkQueries = queries.filter((query) => query.sql.includes('INSERT INTO unified_chunks'));
+  assert.equal(documentQueries.length, 1);
+  assert.equal(documentQueries[0].params[0], 'changed');
+  assert.equal(chunkQueries.length, 1);
+  assert.equal(chunkQueries[0].params[0], 'changed_chunk');
+  assert.equal(store.pendingDocumentIds.size, 0);
+  assert.equal(store.pendingChunkIds.size, 0);
+});
+
+test('postgres store only upserts changed operational records', async () => {
+  const store = new PostgresSearchStore({ connectionString: 'postgres://example.invalid/test', ssl: false });
+  const queries = [];
+  store.pool = {
+    async connect() {
+      return {
+        async query(sql, params = []) {
+          queries.push({ sql, params });
+        },
+        release() {},
+      };
+    },
+  };
+  store.state.jobs.existing_job = { id: 'existing_job', source: 'slack', tenantId: 'atlasweb', userId: 'rakib' };
+  store.state.audit.push({ id: 'existing_event', eventType: 'existing' });
+  const changedJob = store.createJob({ source: 'slack', tenantId: 'atlasweb', userId: 'rakib' });
+  store.audit({ eventType: 'sync_start', tenantId: 'atlasweb', userId: 'rakib' });
+
+  await store.save();
+
+  const jobQueries = queries.filter((query) => query.sql.includes('INSERT INTO unified_jobs'));
+  const auditQueries = queries.filter((query) => query.sql.includes('INSERT INTO unified_audit'));
+  assert.equal(jobQueries.length, 1);
+  assert.equal(jobQueries[0].params[0], changedJob.id);
+  assert.equal(auditQueries.length, 1);
+  assert.notEqual(auditQueries[0].params[0], 'existing_event');
+  assert.equal(store.pendingJobIds.size, 0);
+  assert.equal(store.pendingAuditEventIds.size, 0);
+});
+
 test('search run source-agent timeout returns partial results', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-unified-timeout-'));
   try {
@@ -809,25 +891,36 @@ test('slack events webhook verifies signatures and uses readiness-gated scoped e
       ...config(dir),
       auth: { required: true, token: 'api-token' },
       slack: {
-        botToken: 'xoxb-test',
-        channelIds: ['C1'],
+        botToken: '',
+        channelIds: [],
         limit: 10,
         signingSecret,
-        eventTenantId: 'atlasweb',
-        eventUserId: 'rakib',
+        eventTenantId: '',
+        eventUserId: '',
       },
+    });
+    await liveApp.locals.services.installations.upsert({
+      source: 'slack',
+      providerTeamId: 'T-live',
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      credentials: { botToken: 'xoxb-test', channelIds: ['C1'] },
     });
     const liveServer = liveApp.listen(0);
     await new Promise((resolve) => liveServer.once('listening', resolve));
     try {
       const liveBase = `http://127.0.0.1:${liveServer.address().port}`;
+      const routedEventBody = JSON.stringify({
+        ...JSON.parse(eventBody),
+        team_id: 'T-live',
+      });
       const accepted = await fetch(`${liveBase}/v1/webhooks/slack/events`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...slackSignatureHeaders(signingSecret, eventBody),
+          ...slackSignatureHeaders(signingSecret, routedEventBody),
         },
-        body: eventBody,
+        body: routedEventBody,
       });
       assert.equal(accepted.status, 202);
       const acceptedBody = await accepted.json();
@@ -836,6 +929,17 @@ test('slack events webhook verifies signatures and uses readiness-gated scoped e
       assert.equal(acceptedBody.eventTrigger.channelId, 'C1');
       assert.equal(acceptedBody.job.tenantId, 'atlasweb');
       assert.equal(acceptedBody.job.userId, 'rakib');
+
+      const duplicate = await fetch(`${liveBase}/v1/webhooks/slack/events`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...slackSignatureHeaders(signingSecret, routedEventBody),
+        },
+        body: routedEventBody,
+      });
+      assert.equal(duplicate.status, 200);
+      assert.equal((await duplicate.json()).duplicate, true);
 
       const audit = await fetch(`${liveBase}/v1/audit?tenantId=atlasweb&userId=rakib&eventType=connector_event_received`, {
         headers: { Authorization: 'Bearer api-token' },

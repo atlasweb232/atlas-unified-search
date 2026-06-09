@@ -7,6 +7,14 @@ export class PostgresSearchStore extends JsonSearchStore {
     this.name = 'postgres-pgvector';
     this.pool = new pg.Pool({ connectionString, ssl });
     this.embeddingDim = Number(embeddingDim) || 768;
+    this.pendingDocumentIds = new Set();
+    this.pendingChunkIds = new Set();
+    this.pendingCheckpointKeys = new Set();
+    this.pendingJobIds = new Set();
+    this.pendingSearchRunIds = new Set();
+    this.pendingAssistantActionIds = new Set();
+    this.pendingArtifactIds = new Set();
+    this.pendingAuditEventIds = new Set();
     this.pendingDeletedDocumentIds = new Set();
     this.pendingDeletedCheckpointKeys = new Set();
   }
@@ -50,13 +58,17 @@ export class PostgresSearchStore extends JsonSearchStore {
       if (this.pendingDeletedCheckpointKeys.size) {
         await client.query('DELETE FROM unified_checkpoints WHERE key = ANY($1::text[])', [[...this.pendingDeletedCheckpointKeys]]);
       }
-      for (const document of Object.values(this.state.documents)) {
-        await upsertDocument(client, document);
+      for (const documentId of this.pendingDocumentIds) {
+        const document = this.state.documents[documentId];
+        if (document) await upsertDocument(client, document);
       }
-      for (const chunk of Object.values(this.state.chunks)) {
-        await upsertChunk(client, chunk, this.embeddingDim);
+      for (const chunkId of this.pendingChunkIds) {
+        const chunk = this.state.chunks[chunkId];
+        if (chunk) await upsertChunk(client, chunk, this.embeddingDim);
       }
-      for (const [key, checkpoint] of Object.entries(this.state.checkpoints)) {
+      for (const key of this.pendingCheckpointKeys) {
+        const checkpoint = this.state.checkpoints[key];
+        if (!checkpoint) continue;
         await client.query(
           `INSERT INTO unified_checkpoints (key, checkpoint, updated_at)
            VALUES ($1, $2, now())
@@ -64,19 +76,26 @@ export class PostgresSearchStore extends JsonSearchStore {
           [key, checkpoint],
         );
       }
-      for (const job of Object.values(this.state.jobs)) {
-        await upsertJob(client, job);
+      for (const jobId of this.pendingJobIds) {
+        const job = this.state.jobs[jobId];
+        if (job) await upsertJob(client, job);
       }
-      for (const run of Object.values(this.state.searchRuns)) {
-        await upsertSearchRun(client, run);
+      for (const runId of this.pendingSearchRunIds) {
+        const run = this.state.searchRuns[runId];
+        if (run) await upsertSearchRun(client, run);
       }
-      for (const action of Object.values(this.state.assistantActions)) {
-        await upsertAssistantAction(client, action);
+      for (const actionId of this.pendingAssistantActionIds) {
+        const action = this.state.assistantActions[actionId];
+        if (action) await upsertAssistantAction(client, action);
       }
-      for (const artifact of Object.values(this.state.artifacts)) {
-        await upsertArtifact(client, artifact);
+      for (const artifactId of this.pendingArtifactIds) {
+        const artifact = this.state.artifacts[artifactId];
+        if (artifact) await upsertArtifact(client, artifact);
       }
-      for (const event of this.state.audit.slice(0, 1000)) {
+      const auditById = new Map(this.state.audit.map((event) => [event.id, event]));
+      for (const eventId of this.pendingAuditEventIds) {
+        const event = auditById.get(eventId);
+        if (!event) continue;
         await client.query(
           `INSERT INTO unified_audit (id, tenant_id, user_id, event_type, event, created_at)
            VALUES ($1, $2, $3, $4, $5, $6)
@@ -85,6 +104,14 @@ export class PostgresSearchStore extends JsonSearchStore {
         );
       }
       await client.query('COMMIT');
+      this.pendingDocumentIds.clear();
+      this.pendingChunkIds.clear();
+      this.pendingCheckpointKeys.clear();
+      this.pendingJobIds.clear();
+      this.pendingSearchRunIds.clear();
+      this.pendingAssistantActionIds.clear();
+      this.pendingArtifactIds.clear();
+      this.pendingAuditEventIds.clear();
       this.pendingDeletedDocumentIds.clear();
       this.pendingDeletedCheckpointKeys.clear();
     } catch (error) {
@@ -99,9 +126,79 @@ export class PostgresSearchStore extends JsonSearchStore {
     await this.pool.end();
   }
 
+  upsertDocument(document, chunks) {
+    super.upsertDocument(document, chunks);
+    this.pendingDocumentIds.add(document.id);
+    for (const chunk of chunks) this.pendingChunkIds.add(chunk.id);
+  }
+
+  setCheckpoint(key, checkpoint) {
+    super.setCheckpoint(key, checkpoint);
+    this.pendingCheckpointKeys.add(key);
+  }
+
+  createJob(args) {
+    const job = super.createJob(args);
+    this.pendingJobIds.add(job.id);
+    return job;
+  }
+
+  updateJob(id, patch) {
+    const job = super.updateJob(id, patch);
+    this.pendingJobIds.add(id);
+    return job;
+  }
+
+  createSearchRun(args) {
+    const run = super.createSearchRun(args);
+    this.pendingSearchRunIds.add(run.id);
+    return run;
+  }
+
+  updateSearchRun(id, patch) {
+    const run = super.updateSearchRun(id, patch);
+    if (run) this.pendingSearchRunIds.add(id);
+    return run;
+  }
+
+  updateSourceStatus(searchRunId, source, patch) {
+    const run = super.updateSourceStatus(searchRunId, source, patch);
+    if (run) this.pendingSearchRunIds.add(searchRunId);
+    return run;
+  }
+
+  createAssistantAction(action) {
+    const created = super.createAssistantAction(action);
+    this.pendingAssistantActionIds.add(created.id);
+    return created;
+  }
+
+  updateAssistantAction(id, patch) {
+    const action = super.updateAssistantAction(id, patch);
+    this.pendingAssistantActionIds.add(id);
+    return action;
+  }
+
+  createArtifact(artifact) {
+    const created = super.createArtifact(artifact);
+    this.pendingArtifactIds.add(created.id);
+    return created;
+  }
+
+  audit(event) {
+    super.audit(event);
+    if (this.state.audit[0]) this.pendingAuditEventIds.add(this.state.audit[0].id);
+  }
+
   deleteDocuments(args) {
     const deleted = super.deleteDocuments(args);
-    for (const id of deleted.documentIds) this.pendingDeletedDocumentIds.add(id);
+    for (const id of deleted.documentIds) {
+      this.pendingDocumentIds.delete(id);
+      this.pendingDeletedDocumentIds.add(id);
+    }
+    for (const chunkId of this.pendingChunkIds) {
+      if (!this.state.chunks[chunkId]) this.pendingChunkIds.delete(chunkId);
+    }
     return deleted;
   }
 
@@ -111,7 +208,10 @@ export class PostgresSearchStore extends JsonSearchStore {
       prefix ? key.startsWith(prefix) : key.includes(`:${tenantId}:${userId}:`)
     ));
     const deleted = super.deleteCheckpoints({ tenantId, userId, source });
-    for (const key of keys) this.pendingDeletedCheckpointKeys.add(key);
+    for (const key of keys) {
+      this.pendingCheckpointKeys.delete(key);
+      this.pendingDeletedCheckpointKeys.add(key);
+    }
     return deleted;
   }
 
@@ -213,6 +313,16 @@ export class PostgresSearchStore extends JsonSearchStore {
     this.state.assistantActions = Object.fromEntries(actions.rows.map((row) => [row.id, assistantActionFromRow(row)]));
     this.state.artifacts = Object.fromEntries(artifacts.rows.map((row) => [row.id, artifactFromRow(row)]));
     this.state.audit = audit.rows.map((row) => ({ id: row.id, createdAt: iso(row.created_at), ...row.event }));
+    this.pendingDocumentIds.clear();
+    this.pendingChunkIds.clear();
+    this.pendingCheckpointKeys.clear();
+    this.pendingJobIds.clear();
+    this.pendingSearchRunIds.clear();
+    this.pendingAssistantActionIds.clear();
+    this.pendingArtifactIds.clear();
+    this.pendingAuditEventIds.clear();
+    this.pendingDeletedDocumentIds.clear();
+    this.pendingDeletedCheckpointKeys.clear();
   }
 }
 

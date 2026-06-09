@@ -11,12 +11,18 @@ if (!config.postgres.connectionString) {
 }
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const migration = await readFile(path.join(root, 'migrations/001_pgvector_store.sql'), 'utf8');
+const migrations = [
+  '001_pgvector_store.sql',
+  '002_connector_installations.sql',
+];
 const pool = new pg.Pool({ connectionString: config.postgres.connectionString, ssl: config.postgres.ssl });
 
 try {
-  await pool.query(migration);
-  console.log('Postgres migration completed');
+  for (const file of migrations) {
+    const migration = await readFile(path.join(root, 'migrations', file), 'utf8');
+    await pool.query(migration);
+    console.log(`Postgres migration completed: ${file}`);
+  }
 } finally {
   await pool.end();
 }

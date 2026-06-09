@@ -9,6 +9,7 @@ import { createChatProvider } from './assistant/providers.js';
 import { createConnectorRegistry } from './connectors/index.js';
 import { createEmbedder } from './embedding.js';
 import { JobRunner } from './jobRunner.js';
+import { InstallationStore } from './installationStore.js';
 import { requireApiAuth } from './middleware/auth.js';
 import { resolveIdentity, enforceTenantScope, deriveScope, scopeOf, allowedSourcesOf, mintIdentityToken } from './middleware/identity.js';
 import { OnboardingStore } from './onboardingStore.js';
@@ -37,10 +38,15 @@ export async function createApp(config) {
   await store.load();
   const onboarding = new OnboardingStore({ dataDir: config.dataDir });
   await onboarding.load();
+  const installations = new InstallationStore(config);
+  await installations.load();
   const embedder = await createEmbedder(config);
   const searchEngine = new SearchEngine({ store, embedder, weights: config.search, embeddingDim: config.embeddingDim });
   const registry = createConnectorRegistry(config, {
-    credentialResolver: (source, scope) => onboarding.credentialsFor(source, scope),
+    credentialResolver: (source, scope) => ({
+      ...onboarding.credentialsFor(source, scope),
+      ...installations.credentialsFor(source, scope),
+    }),
   });
   const queue = createJobQueue(config);
   const jobs = new JobRunner({ registry, store, searchEngine, queue, retry: config.syncRetry });
@@ -51,7 +57,7 @@ export async function createApp(config) {
     artifactProvider: new LocalArtifactProvider({ dataDir: config.dataDir, azure: config.artifacts || {} }),
   });
 
-  app.locals.services = { store, searchEngine, registry, jobs, searchRuns, assistant, queue, onboarding };
+  app.locals.services = { store, searchEngine, registry, jobs, searchRuns, assistant, queue, onboarding, installations };
 
   app.get('/v1/health', (req, res) => {
     refreshStore(store).then(() => {
@@ -192,7 +198,13 @@ export async function createApp(config) {
   app.get('/v1/onboarding/oauth/slack/start', (req, res) => {
     const secret = config.identity?.jwtSecret;
     if (!secret) return res.status(400).json({ success: false, error: 'IDENTITY_JWT_SECRET is required for OAuth' });
-    const state = signState({ provider: 'slack', tenantHint: req.query.tenant || '' }, secret);
+    let returnTo = '';
+    try {
+      returnTo = resolveOAuthReturnTo(config, req.query.returnTo);
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    const state = signState({ provider: 'slack', tenantHint: req.query.tenant || '', returnTo }, secret);
     const authorizeUrl = buildAuthorizeUrl({ config, state });
     if (req.query.redirect === '1') return res.redirect(authorizeUrl);
     return res.json({ success: true, authorizeUrl, state, stub: isStubMode(config) });
@@ -200,8 +212,9 @@ export async function createApp(config) {
 
   app.get('/v1/onboarding/oauth/slack/callback', async (req, res) => {
     const secret = config.identity?.jwtSecret;
+    let oauthState;
     try {
-      verifyState(req.query.state, secret);
+      oauthState = verifyState(req.query.state, secret);
     } catch (error) {
       return res.status(400).json({ success: false, error: error.message });
     }
@@ -225,6 +238,14 @@ export async function createApp(config) {
         source: 'slack',
         credentials: { botToken: result.botToken, channelIds },
       });
+      await installations.upsert({
+        source: 'slack',
+        providerTeamId: result.teamId,
+        tenantId,
+        userId,
+        credentials: { botToken: result.botToken, channelIds },
+        metadata: { teamName: result.teamName, email: result.email },
+      });
 
       // Notify auth-service so it can record a source_connections row keyed to
       // this user's Atlas account (fire-and-forget; never blocks the OAuth redirect).
@@ -244,7 +265,7 @@ export async function createApp(config) {
       const backfill = await autoBackfill(jobs, { source: 'slack', tenantId, userId });
 
       // Bounce back to the frontend with the token, or return JSON.
-      const redirect = config.slack?.oauth?.postLoginRedirect;
+      const redirect = oauthState.returnTo || config.slack?.oauth?.postLoginRedirect;
       if (redirect) {
         const url = new URL(redirect);
         url.hash = new URLSearchParams({ token: minted.token, tenantId, userId }).toString();
@@ -263,7 +284,13 @@ export async function createApp(config) {
   app.get('/v1/onboarding/oauth/gdrive/start', (req, res) => {
     const secret = config.identity?.jwtSecret;
     if (!secret) return res.status(400).json({ success: false, error: 'IDENTITY_JWT_SECRET is required for OAuth' });
-    const state = gdriveSignState({ provider: 'gdrive' }, secret);
+    let returnTo = '';
+    try {
+      returnTo = resolveOAuthReturnTo(config, req.query.returnTo);
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    const state = gdriveSignState({ provider: 'gdrive', returnTo }, secret);
     const authorizeUrl = gdriveAuthorizeUrl({ config, state });
     if (req.query.redirect === '1') return res.redirect(authorizeUrl);
     return res.json({ success: true, authorizeUrl, state, stub: gdriveStubMode(config) });
@@ -271,7 +298,8 @@ export async function createApp(config) {
 
   app.get('/v1/onboarding/oauth/gdrive/callback', async (req, res) => {
     const secret = config.identity?.jwtSecret;
-    try { gdriveVerifyState(req.query.state, secret); } catch (error) {
+    let oauthState;
+    try { oauthState = gdriveVerifyState(req.query.state, secret); } catch (error) {
       return res.status(400).json({ success: false, error: error.message });
     }
     if (req.query.error) return res.status(400).json({ success: false, error: `Google denied: ${req.query.error}` });
@@ -308,7 +336,7 @@ export async function createApp(config) {
       }, secret);
       const backfill = await autoBackfill(jobs, { source: 'google_drive', tenantId, userId });
 
-      const redirect = config.gdrive?.oauth?.postLoginRedirect;
+      const redirect = oauthState.returnTo || config.gdrive?.oauth?.postLoginRedirect;
       if (redirect) {
         const url = new URL(redirect);
         url.hash = new URLSearchParams({ token: minted.token, tenantId, userId }).toString();
@@ -331,12 +359,26 @@ export async function createApp(config) {
     if (req.body?.type === 'url_verification') {
       return res.json({ challenge: req.body.challenge || '' });
     }
-    const tenantId = config.slack?.eventTenantId || '';
-    const userId = config.slack?.eventUserId || '';
-    if (!tenantId || !userId) {
-      return res.status(400).json({ success: false, error: 'SLACK_EVENT_TENANT_ID and SLACK_EVENT_USER_ID are required for Slack events' });
-    }
     const event = req.body?.event || {};
+    const providerTeamId = req.body?.team_id || req.body?.team?.id || event.team || '';
+    await installations.refresh();
+    const installation = installations.byProviderTeam('slack', providerTeamId);
+    const tenantId = installation?.tenantId || config.slack?.eventTenantId || '';
+    const userId = installation?.userId || config.slack?.eventUserId || '';
+    if (!tenantId || !userId) {
+      return res.status(404).json({ success: false, error: `No connected Slack installation for team: ${providerTeamId || 'unknown'}` });
+    }
+    const eventId = req.body?.event_id || event.event_id || '';
+    const claim = await installations.claimEvent({
+      eventId,
+      source: 'slack',
+      providerTeamId,
+      tenantId,
+      userId,
+    });
+    if (!claim.claimed) {
+      return res.status(200).json({ success: true, duplicate: true, eventId });
+    }
     try {
       const result = await enqueueConnectorEvent({
         config,
@@ -348,14 +390,16 @@ export async function createApp(config) {
         userId,
         event: {
           ...event,
-          event_id: req.body?.event_id || event.event_id,
+          event_id: eventId,
           event_ts: req.body?.event_time ? String(req.body.event_time) : event.event_ts,
         },
         options: {},
         wait: false,
       });
+      await installations.markEventJob(eventId, result.job?.id || '');
       return res.status(202).json({ success: true, job: result.job, eventTrigger: result.eventTrigger });
     } catch (error) {
+      await installations.releaseEvent(eventId);
       return res.status(error.statusCode || 400).json({ success: false, error: error.message, details: error.details || undefined });
     }
   });
@@ -1014,6 +1058,7 @@ function connectorEventOptions(source, event = {}, options = {}) {
   if (source === 'slack') {
     return {
       ...base,
+      eventPayload: event,
       ...(event.channel ? { channelIds: [event.channel] } : {}),
       ...(event.ts || event.event_ts ? { sinceTs: event.thread_ts || event.ts || event.event_ts } : {}),
       limit: options.limit || 50,
@@ -1323,8 +1368,6 @@ function webhookIngressReadiness(config) {
   return [
     webhookGate('slack_events', '/v1/webhooks/slack/events', [
       ['SLACK_SIGNING_SECRET', config.slack?.signingSecret],
-      ['SLACK_EVENT_TENANT_ID', config.slack?.eventTenantId],
-      ['SLACK_EVENT_USER_ID', config.slack?.eventUserId],
     ]),
     webhookGate('google_drive_changes', '/v1/webhooks/google-drive/changes', [
       ['GDRIVE_WEBHOOK_TOKEN', config.gdrive?.webhookToken],
@@ -1445,6 +1488,19 @@ async function notifySourceConnectCallback(config, { sourceId, email, credential
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || data.code || `http_${response.status}`);
   }
+}
+
+function resolveOAuthReturnTo(config, value) {
+  if (!value) return '';
+  let url;
+  try {
+    url = new URL(String(value));
+  } catch {
+    throw new Error('OAuth returnTo must be a valid absolute URL');
+  }
+  const allowed = new Set(config.oauth?.allowedReturnOrigins || []);
+  if (!allowed.has(url.origin)) throw new Error(`OAuth return origin is not allowed: ${url.origin}`);
+  return url.origin;
 }
 
 function liveSmokeGuide(source) {
