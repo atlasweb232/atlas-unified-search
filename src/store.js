@@ -416,16 +416,27 @@ export class SearchEngine {
   }
 
   async search({ tenantId, userId, query, sources = [], filters = {}, limit = 10 }) {
-    const queryVector = await this.embedder.embed(query);
-    const candidateLimit = Math.max(limit * this.candidateMultiplier, 50);
+    let queryVector;
+    let vectorWeight = this.weights.vector;
+    let candidateLimit = Math.max(limit * this.candidateMultiplier, 50);
+    let lexicalOnly = false;
+    try {
+      queryVector = await this.embedder.embed(query);
+    } catch {
+      queryVector = new Array(this.embeddingDim).fill(0);
+      vectorWeight = 0;
+      lexicalOnly = true;
+      candidateLimit = Math.max(this.store.listChunks().length, candidateLimit);
+    }
     const rawCandidates = this.store.searchChunks({
       tenantId, userId, sources, queryVector, candidateLimit, filters,
     });
     const best = new Map();
     for (const { document, chunk, distance } of rawCandidates) {
       const lexical = lexicalScore(query, `${document.title} ${document.summary} ${chunk.text}`);
+      if (lexicalOnly && lexical === 0) continue;
       const recency = recencyBoost(document.timestamp);
-      const score = distance * this.weights.vector
+      const score = distance * vectorWeight
         + lexical * this.weights.lexical
         + recency * this.weights.recency;
       const existing = best.get(document.id);

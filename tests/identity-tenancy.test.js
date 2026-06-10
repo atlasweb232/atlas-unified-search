@@ -86,6 +86,26 @@ test('jwt: cross-tenant ID substitution is rejected with 403', async () => {
   }
 });
 
+test('jwt identity replaces the legacy shared-token gate when both are configured', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-identity-jwt-auth-'));
+  const secret = 'jwt-and-legacy-secret';
+  const config = baseConfig(dir, { mode: 'jwt', jwtSecret: secret, tenantKeys: {} });
+  config.auth = { required: true, token: 'legacy-shared-token' };
+  const token = signJwtHS256({ tenantId: 'tenantA', userId: 'u1' }, secret);
+  try {
+    await withServer(config, async (base) => {
+      const response = await postSearch(base, { authorization: `Bearer ${token}` }, {
+        tenantId: 'tenantA',
+        userId: 'u1',
+        query: 'jwt identity',
+      });
+      assert.equal(response.status, 200);
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('jwt: invalid signature is rejected with 401', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'uss-jwt2-'));
   try {

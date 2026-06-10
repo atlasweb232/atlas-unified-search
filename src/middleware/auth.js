@@ -10,6 +10,7 @@ export function requireApiAuth(config) {
     if (req.path === '/v1/webhooks/azure-blob/events') return next();
     if (!req.path.startsWith('/v1/')) return next();
     if (!config.auth?.required) return next();
+    if (['jwt', 'api_key'].includes(config.identity?.mode)) return next();
 
     const header = String(req.headers.authorization || '');
     const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
