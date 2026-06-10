@@ -33,6 +33,7 @@ collect_production_env() {
   append_secret_env "POSTGRES_CONNECTION_STRING" "unified-search-postgres"
   append_secret_env "SERVICE_BUS_CONNECTION_STRING" "unified-search-servicebus"
   append_secret_env "OPENAI_API_KEY" "openai-api-key"
+  append_secret_env "EMBEDDING_API_KEY" "embedding-api-key"
   append_secret_env "SLACK_BOT_TOKEN" "slack-bot-token"
   append_secret_env "CONNECTOR_CREDENTIAL_ENCRYPTION_KEY" "connector-credential-encryption-key"
   append_secret_env "GOOGLE_CLIENT_ID" "google-client-id"
@@ -44,6 +45,9 @@ collect_production_env() {
   append_secret_env "AZURE_STORAGE_CONNECTION_STRING" "unified-search-azure-storage"
   append_secret_env "DATA_FABRIC_API_TOKEN" "data-fabric-api-token"
   [[ -n "${SERVICE_BUS_SYNC_QUEUE_NAME:-}" ]] && ENV_VARS+=("SERVICE_BUS_SYNC_QUEUE_NAME=$SERVICE_BUS_SYNC_QUEUE_NAME")
+  [[ -n "${EMBEDDING_API_URL:-}" ]] && ENV_VARS+=("EMBEDDING_API_URL=$EMBEDDING_API_URL")
+  [[ -n "${EMBEDDING_MODEL:-}" ]] && ENV_VARS+=("EMBEDDING_MODEL=$EMBEDDING_MODEL")
+  [[ -n "${EMBEDDING_DIM:-}" ]] && ENV_VARS+=("EMBEDDING_DIM=$EMBEDDING_DIM")
   [[ -n "${SLACK_CHANNEL_IDS:-}" ]] && ENV_VARS+=("SLACK_CHANNEL_IDS=$SLACK_CHANNEL_IDS")
   [[ -n "${GDRIVE_FOLDER_IDS:-}" ]] && ENV_VARS+=("GDRIVE_FOLDER_IDS=$GDRIVE_FOLDER_IDS")
   [[ -n "${EMAIL_VECTOR_SEARCH_URL:-}" ]] && ENV_VARS+=("EMAIL_VECTOR_SEARCH_URL=$EMAIL_VECTOR_SEARCH_URL")

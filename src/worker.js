@@ -69,6 +69,9 @@ receiver.subscribe({
   processError: async (error) => {
     console.error('Service Bus worker error', error);
   },
+}, {
+  maxConcurrentCalls: 1,
+  maxAutoLockRenewalDurationInMs: 30 * 60 * 1000,
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

@@ -1,5 +1,15 @@
 export async function createEmbedder(config) {
   const dimensions = Number(config.embeddingDim) || 768;
+  if (config.embeddingProvider === 'bge_api') {
+    if (!config.embeddingApiUrl) throw new Error('EMBEDDING_API_URL is required for bge_api');
+    return {
+      model: config.embeddingModel || 'BAAI/bge-base-en-v1.5',
+      version: `bge-api:${config.embeddingModel || 'BAAI/bge-base-en-v1.5'}:${dimensions}`,
+      dimensions,
+      embed: (text) => apiEmbedding(config, text, dimensions),
+      embedMany: (texts) => apiEmbeddings(config, texts, dimensions),
+    };
+  }
   if (config.embeddingProvider === 'openai' && config.openaiApiKey) {
     return {
       model: config.embeddingModel,
@@ -15,6 +25,62 @@ export async function createEmbedder(config) {
     dimensions,
     embed: async (text) => hashEmbedding(text, dimensions),
   };
+}
+
+async function apiEmbedding(config, text, dimensions) {
+  const vectors = await apiEmbeddings(config, [text], dimensions);
+  return vectors[0];
+}
+
+async function apiEmbeddings(config, texts, dimensions) {
+  const endpoint = new URL('/v1/embeddings', ensureTrailingSlash(config.embeddingApiUrl));
+  const input = texts.map((text) => String(text || '').slice(0, 24000));
+  let lastError;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          ...(config.embeddingApiKey ? { Authorization: `Bearer ${config.embeddingApiKey}` } : {}),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: config.embeddingModel || 'BAAI/bge-base-en-v1.5',
+          input,
+          dimensions,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(data.detail || data.error?.message || `Embedding API request failed with HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      const vectors = (data.data || []).map((item) => normalize(item.embedding || []));
+      if (vectors.length !== input.length) {
+        throw new Error(`Embedding provider returned ${vectors.length} vectors, expected ${input.length}`);
+      }
+      for (const vector of vectors) {
+        if (vector.length !== dimensions) {
+          throw new Error(`Embedding provider returned ${vector.length} dims, expected ${dimensions}`);
+        }
+      }
+      return vectors;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 4 || (error.status && ![408, 425, 429, 500, 502, 503, 504].includes(error.status))) throw error;
+      await sleep(250 * (2 ** (attempt - 1)));
+    }
+  }
+  throw lastError;
+}
+
+function ensureTrailingSlash(value) {
+  return value.endsWith('/') ? value : `${value}/`;
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 // Fail-fast guard: the embedder MUST produce vectors at exactly the configured

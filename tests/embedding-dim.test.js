@@ -28,6 +28,73 @@ test('embedder version encodes the dimension so a dim change is detectable', asy
   assert.notEqual(a.version, b.version, 'different dims must produce different versions');
 });
 
+test('bge_api embedder calls the configured authenticated 768-dimension service', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url: String(url), options };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ embedding: new Array(768).fill(1) }] }),
+    };
+  };
+  try {
+    const embedder = await createEmbedder({
+      embeddingProvider: 'bge_api',
+      embeddingDim: 768,
+      embeddingModel: 'BAAI/bge-base-en-v1.5',
+      embeddingApiUrl: 'https://bge.internal',
+      embeddingApiKey: 'secret',
+    });
+    const vector = await embedder.embed('quarterly planning');
+    assert.equal(vector.length, 768);
+    assert.equal(request.url, 'https://bge.internal/v1/embeddings');
+    assert.equal(request.options.headers.Authorization, 'Bearer secret');
+    assert.deepEqual(JSON.parse(request.options.body), {
+      model: 'BAAI/bge-base-en-v1.5',
+      input: ['quarterly planning'],
+      dimensions: 768,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('bge_api embedder batches multiple texts in one request', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (_url, options) => {
+    calls += 1;
+    const input = JSON.parse(options.body).input;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ data: input.map(() => ({ embedding: new Array(768).fill(1) })) }),
+    };
+  };
+  try {
+    const embedder = await createEmbedder({
+      embeddingProvider: 'bge_api',
+      embeddingDim: 768,
+      embeddingApiUrl: 'https://bge.internal',
+    });
+    const vectors = await embedder.embedMany(['one', 'two', 'three']);
+    assert.equal(calls, 1);
+    assert.equal(vectors.length, 3);
+    assert.ok(vectors.every((vector) => vector.length === 768));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('bge_api requires an endpoint', async () => {
+  await assert.rejects(
+    createEmbedder({ embeddingProvider: 'bge_api', embeddingDim: 768 }),
+    /EMBEDDING_API_URL/,
+  );
+});
+
 // ─── fail-fast assertion ────────────────────────────────────────────────────────
 
 test('assertEmbedderDimension passes on match, throws on mismatch', () => {
@@ -49,6 +116,40 @@ test('SearchEngine construction fails fast when embedder dim != EMBEDDING_DIM', 
 test('SearchEngine accepts a matching embedder dim', () => {
   const embedder = { model: 'm', version: 'v', dimensions: 768, embed: async () => [] };
   assert.doesNotThrow(() => new SearchEngine({ store: null, embedder, embeddingDim: 768 }));
+});
+
+test('SearchEngine sends remote embeddings in batches with concurrency two', async () => {
+  let calls = 0;
+  let active = 0;
+  let maxActive = 0;
+  const stored = [];
+  const embedder = {
+    model: 'bge',
+    version: 'bge:v1',
+    dimensions: 768,
+    embed: async () => new Array(768).fill(0),
+    embedMany: async (texts) => {
+      calls += 1;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return texts.map(() => new Array(768).fill(1));
+    },
+  };
+  const engine = new SearchEngine({
+    store: { upsertDocument: (document, chunks) => stored.push({ document, chunks }) },
+    embedder,
+    embeddingDim: 768,
+  });
+  const documents = Array.from({ length: 65 }, (_, index) => ({ id: `d${index}` }));
+  await engine.indexDocuments(documents, {
+    chunker: (document) => [{ id: `${document.id}:0`, text: document.id }],
+  });
+  assert.equal(calls, 3);
+  assert.equal(maxActive, 2);
+  assert.equal(stored.length, 65);
+  assert.ok(stored.every(({ chunks }) => chunks[0].embeddingVersion === 'bge:v1'));
 });
 
 // ─── matching dim indexes real vectors; version drift is flagged stale ──────────

@@ -43,6 +43,8 @@ export function loadConfig() {
     embeddingDim: number('EMBEDDING_DIM', 768),
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     embeddingModel: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
+    embeddingApiUrl: process.env.EMBEDDING_API_URL || '',
+    embeddingApiKey: process.env.EMBEDDING_API_KEY || '',
     chat: {
       provider: process.env.CHAT_PROVIDER || '',
       model: process.env.CHAT_MODEL || '',
