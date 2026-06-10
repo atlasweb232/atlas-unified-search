@@ -467,6 +467,77 @@ button:disabled {
   font-size: 12px;
 }
 
+.recent-searches {
+  margin: 0 0 12px;
+}
+
+.recent-searches > strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.recent-searches > div {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding-bottom: 3px;
+}
+
+.recent-searches button {
+  flex: 0 0 190px;
+  overflow: hidden;
+  border: 1px solid #dfe5ef;
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent-searches span,
+.recent-searches small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-searches span {
+  color: #273244;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.recent-searches small {
+  margin-top: 3px;
+  color: #778297;
+  font-size: 10px;
+}
+
+.main-retrieval-summary {
+  margin-bottom: 12px;
+  border: 1px solid #b9c9ed;
+  border-radius: 8px;
+  background: #f7f9ff;
+  padding: 12px;
+}
+
+.main-retrieval-summary > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #315fb6;
+}
+
+.main-retrieval-summary p {
+  margin: 8px 0 0;
+  color: #344154;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .results {
   display: grid;
   gap: 10px;

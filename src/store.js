@@ -244,6 +244,14 @@ export class JsonSearchStore {
     return this.state.searchRuns[id] || null;
   }
 
+  listSearchRuns({ tenantId = '', userId = '', limit = 20 } = {}) {
+    return Object.values(this.state.searchRuns)
+      .filter((run) => (!tenantId || run.tenantId === tenantId))
+      .filter((run) => (!userId || run.userId === userId))
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+      .slice(0, Math.min(Math.max(Number(limit) || 20, 1), 100));
+  }
+
   createAssistantAction(action) {
     const id = `act_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const row = {

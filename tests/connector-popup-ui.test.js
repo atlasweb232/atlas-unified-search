@@ -40,4 +40,7 @@ test('search results expose full message text and summarize all retrieved result
   assert.match(workspace, /formatRelevance\(result\.score\)/);
   assert.match(workspace, /results\.map\(\(result\) => result\.id\)/);
   assert.match(workspace, /Retrieval summary/);
+  assert.match(workspace, /Summary of these search results/);
+  assert.match(workspace, /Recent searches/);
+  assert.match(workspace, /restoreSearch/);
 });

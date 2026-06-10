@@ -8,6 +8,7 @@ export class SlackConnector {
     this.source = SOURCES.slack;
     this.config = config.slack;
     this.tokenProvider = tokenProvider;
+    this.userNames = new Map();
     this.practical = true;
     this.description = 'Slack bot-token connector for messages, threads, links, and file metadata.';
   }
@@ -83,7 +84,8 @@ export class SlackConnector {
         if (!message.ts || message.subtype === 'message_deleted') continue;
         const replies = message.thread_ts ? await this.paginate('conversations.replies', { channel: channelId, ts: message.thread_ts, limit: '200' }, 'messages', scope) : [];
         const permalink = await this.call('chat.getPermalink', { channel: channelId, message_ts: message.ts }, scope).then((data) => data.permalink).catch(() => '');
-        documents.push(slackMessageToDocument({ tenantId, userId, channel: channel.channel, message, replies, permalink }));
+        const userNames = await this.resolveUserNames([message, ...replies], scope);
+        documents.push(slackMessageToDocument({ tenantId, userId, channel: channel.channel, message, replies, permalink, userNames }));
         if (!latestTs || slackTsNumber(message.ts) > slackTsNumber(latestTs)) latestTs = message.ts;
       }
       if (store && latestTs) {
@@ -137,6 +139,7 @@ export class SlackConnector {
       channel: event.channel,
       message_ts: message.ts,
     }, scope).then((data) => data.permalink).catch(() => '');
+    const userNames = await this.resolveUserNames([message, ...replies], scope);
     return slackMessageToDocument({
       tenantId,
       userId,
@@ -144,7 +147,20 @@ export class SlackConnector {
       message,
       replies,
       permalink,
+      userNames,
     });
+  }
+
+  async resolveUserNames(messages, scope) {
+    const ids = [...new Set(messages.map((message) => message.user).filter(Boolean))];
+    await Promise.all(ids.map(async (id) => {
+      if (this.userNames.has(id)) return;
+      const name = await this.call('users.info', { user: id }, scope)
+        .then(({ user }) => user?.profile?.display_name || user?.profile?.real_name || user?.real_name || user?.name || id)
+        .catch(() => id);
+      this.userNames.set(id, name);
+    }));
+    return this.userNames;
   }
 
   async call(method, params, scope = {}) {
@@ -202,7 +218,7 @@ function slackFixtureToDocument({ tenantId, userId, item }) {
   });
 }
 
-function slackMessageToDocument({ tenantId, userId, channel, message, replies, permalink }) {
+function slackMessageToDocument({ tenantId, userId, channel, message, replies, permalink, userNames = new Map() }) {
   const text = clean(message.text || '');
   const files = normalizeFiles(message.files || []);
   return createDocument({
@@ -214,12 +230,12 @@ function slackMessageToDocument({ tenantId, userId, channel, message, replies, p
     title: `#${channel.name || channel.id}`,
     summary: oneLine(text),
     body: text,
-    author: message.user || message.username || message.bot_id || 'unknown',
+    author: userNames.get(message.user) || message.username || message.user || message.bot_id || 'unknown',
     timestamp: slackTsToIso(message.ts),
     container: channel.name || channel.id,
     metadata: { channelId: channel.id, channelName: channel.name, messageTs: message.ts, links: extractLinks(text), files },
     children: [
-      ...replies.filter((reply) => reply.ts !== message.ts).map((reply) => ({ kind: 'thread_reply', title: reply.user || reply.username || 'reply', text: clean(reply.text || ''), timestamp: slackTsToIso(reply.ts) })),
+      ...replies.filter((reply) => reply.ts !== message.ts).map((reply) => ({ kind: 'thread_reply', title: userNames.get(reply.user) || reply.username || reply.user || 'reply', text: clean(reply.text || ''), timestamp: slackTsToIso(reply.ts) })),
       ...files.map((file) => ({ kind: 'attachment', title: file.name, text: `${file.name} ${file.title} ${file.mimetype}`, metadata: file })),
     ],
   });

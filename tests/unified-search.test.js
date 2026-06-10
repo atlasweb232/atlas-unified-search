@@ -11,6 +11,8 @@ import { SearchRunCoordinator } from '../src/searchRun.js';
 import { JsonSearchStore } from '../src/store.js';
 import { PostgresSearchStore } from '../src/stores/postgresStore.js';
 import { createConnectorRegistry } from '../src/connectors/index.js';
+import { SlackConnector } from '../src/connectors/slack.js';
+import { AssistantActionService } from '../src/assistant/actions.js';
 
 function config(dataDir) {
   return {
@@ -34,6 +36,66 @@ function config(dataDir) {
     dataFabric: { baseUrl: '', apiToken: '', readinessPath: '/health', recordsPath: '/records' },
   };
 }
+
+test('Slack event ingestion resolves readable sender names', async () => {
+  const connector = new SlackConnector({
+    slack: { botToken: 'test-token', channelIds: [], limit: 10 },
+  });
+  connector.call = async (method) => {
+    if (method === 'conversations.info') return { channel: { id: 'C1', name: 'general' } };
+    if (method === 'chat.getPermalink') return { permalink: 'https://example.test/message' };
+    if (method === 'users.info') {
+      return { user: { id: 'U1', profile: { display_name: 'Ada Lovelace' } } };
+    }
+    throw new Error(`Unexpected Slack method ${method}`);
+  };
+
+  const document = await connector.eventDocument({
+    tenantId: 'tenant',
+    userId: 'user',
+    scope: { tenantId: 'tenant', userId: 'user' },
+    event: { channel: 'C1', user: 'U1', text: 'Readable sender test', ts: '1700000000.000100' },
+  });
+
+  assert.equal(document.author, 'Ada Lovelace');
+});
+
+test('summary actions fall back to retrieved result text when the chat provider fails', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-summary-fallback-'));
+  try {
+    const store = new JsonSearchStore({ dataDir: dir });
+    await store.load();
+    const run = store.createSearchRun({
+      tenantId: 'tenant',
+      userId: 'user',
+      query: 'fallback summary',
+      selectedSources: ['slack'],
+      filters: {},
+    });
+    store.updateSearchRun(run.id, {
+      status: 'completed',
+      results: [{ id: 'result-1', documentId: 'doc-1', source: 'slack', oneLine: 'Deployment completed successfully.' }],
+    });
+    const assistant = new AssistantActionService({
+      store,
+      chatProvider: { name: 'unavailable', generate: async () => { throw new Error('quota exceeded'); } },
+      artifactProvider: {},
+    });
+
+    const action = await assistant.run({
+      tenantId: 'tenant',
+      userId: 'user',
+      searchRunId: run.id,
+      actionType: 'summarize',
+      selectedResultIds: ['result-1'],
+    });
+
+    assert.equal(action.status, 'completed');
+    assert.match(action.responseText, /Deployment completed successfully/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -552,6 +614,10 @@ test('unified search indexes fixture documents across all connector types', asyn
     assert.ok(run.searchRun.sourceStatuses.some((status) => status.source === 'email' && status.searchMode === 'federated_unconfigured'));
     assert.ok(run.results.some((result) => result.source === 'conference_bridge'));
     assert.ok(run.results.every((result) => result.sourceIcon && result.sourceLabel));
+
+    const recentRuns = await request(base, `/v1/search-runs?tenantId=${tenantId}&userId=${userId}&limit=5`);
+    assert.equal(recentRuns.runs[0].id, run.searchRun.id);
+    assert.deepEqual(recentRuns.runs[0].results, run.results);
 
     const stream = await fetch(`${base}/v1/search-runs/${run.searchRun.id}/events?tenantId=${tenantId}&userId=${userId}`);
     assert.equal(stream.status, 200);

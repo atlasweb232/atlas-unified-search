@@ -644,6 +644,16 @@ export async function createApp(config) {
     }
   });
 
+  app.get('/v1/search-runs', async (req, res) => {
+    const { tenantId, userId, limit = '20' } = req.query || {};
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    }
+    await refreshStore(store);
+    const runs = store.listSearchRuns({ tenantId, userId, limit });
+    return res.json({ success: true, runs });
+  });
+
   app.get('/v1/search-runs/:searchRunId/events', async (req, res) => {
     const tenantId = req.query.tenantId || req.headers['x-tenant-id'];
     const userId = req.query.userId || req.headers['x-user-id'];

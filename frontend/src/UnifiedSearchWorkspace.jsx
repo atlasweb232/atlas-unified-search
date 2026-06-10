@@ -41,6 +41,8 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
   const [selectedResults, setSelectedResults] = useState(new Set());
   const [assistantPrompt, setAssistantPrompt] = useState('');
   const [assistantJobs, setAssistantJobs] = useState([]);
+  const [retrievalSummary, setRetrievalSummary] = useState(null);
+  const [recentSearches, setRecentSearches] = useState([]);
   const [state, setState] = useState({ loading: false, error: '' });
   const [maintenance, setMaintenance] = useState({ source: '', busy: false, message: '' });
   const initializedSourceSelection = useRef(false);
@@ -116,9 +118,17 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
         }
         return new Set([...current].filter((source) => readySources.has(source)));
       });
+      await loadRecentSearches();
     } catch (error) {
       setState((current) => ({ ...current, error: error.message }));
     }
+  }
+
+  async function loadRecentSearches() {
+    if (!authToken || !scope.tenantId || !scope.userId) return;
+    const encodedScope = `tenantId=${encodeURIComponent(scope.tenantId)}&userId=${encodeURIComponent(scope.userId)}`;
+    const data = await apiRequest(apiBaseUrl, `/v1/search-runs?${encodedScope}&limit=8`, { authToken });
+    setRecentSearches((data.runs || []).filter((item) => ['completed', 'partial'].includes(item.status)));
   }
 
   async function refreshObservability() {
@@ -267,6 +277,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
     setState({ loading: true, error: '' });
     setResults([]);
     setRun(null);
+    setRetrievalSummary(null);
     try {
       const data = await apiRequest(apiBaseUrl, '/v1/search-runs', {
         method: 'POST',
@@ -282,6 +293,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
       });
       setRun(data.searchRun);
       setResults(data.results || []);
+      await loadRecentSearches();
       await streamSearchRun(data.searchRun.id);
     } catch (error) {
       setState({ loading: false, error: error.message });
@@ -298,6 +310,7 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
       setSelectedResults(new Set((data.results || []).slice(0, 3).map((result) => result.id)));
       if (['completed', 'partial', 'failed'].includes(data.searchRun.status)) {
         setState({ loading: false, error: data.searchRun.status === 'failed' ? 'Search run failed.' : '' });
+        void loadRecentSearches();
       }
     });
   }
@@ -323,9 +336,21 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
         }),
       });
       setAssistantJobs((current) => [data.actionJob, ...current]);
+      if (actionType === 'summarize') setRetrievalSummary(data.actionJob);
     } catch (error) {
       setState((current) => ({ ...current, error: error.message }));
     }
+  }
+
+  function restoreSearch(searchRun) {
+    setQuery(searchRun.query || '');
+    setRun(searchRun);
+    setResults(searchRun.results || []);
+    setSelectedSources(new Set(searchRun.selectedSources || []));
+    setSelectedResults(new Set((searchRun.results || []).slice(0, 3).map((result) => result.id)));
+    setExpanded(new Set());
+    setRetrievalSummary(null);
+    setState({ loading: false, error: '' });
   }
 
   function toggleSource(source) {
@@ -531,6 +556,30 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
             <span key={source}>{sourceMeta[source]?.label}: {formatSourceStatus(sourceStatuses[source]) || 'idle'}</span>
           ))}
         </div>
+
+        {recentSearches.length > 0 && (
+          <section className="recent-searches" aria-label="Recent searches">
+            <strong>Recent searches</strong>
+            <div>
+              {recentSearches.map((searchRun) => (
+                <button type="button" key={searchRun.id} onClick={() => restoreSearch(searchRun)}>
+                  <span>{searchRun.query}</span>
+                  <small>{searchRun.results?.length || 0} results · {formatDate(searchRun.completedAt || searchRun.createdAt)}</small>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {retrievalSummary && (
+          <section className="main-retrieval-summary" data-testid="retrieval-summary">
+            <div>
+              <Sparkles size={17} />
+              <strong>Summary of these search results</strong>
+            </div>
+            <p>{retrievalSummary.responseText}</p>
+          </section>
+        )}
 
         <section className="results">
           {results.map((result) => (
