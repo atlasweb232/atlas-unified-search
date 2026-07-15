@@ -7,7 +7,7 @@ import { AssistantActionService } from './assistant/actions.js';
 import { LocalArtifactProvider } from './assistant/artifacts.js';
 import { createChatProvider } from './assistant/providers.js';
 import { createConnectorRegistry } from './connectors/index.js';
-import { createEmbedder } from './embedding.js';
+import { createEmbedder, cosineSimilarity } from './embedding.js';
 import { JobRunner } from './jobRunner.js';
 import { InstallationStore } from './installationStore.js';
 import { requireApiAuth } from './middleware/auth.js';
@@ -20,6 +20,7 @@ import { parseSyncSchedules, summarizeSchedules } from './scheduleConfig.js';
 import { SearchRunCoordinator } from './searchRun.js';
 import { createSearchStore } from './stores/postgresStore.js';
 import { SearchEngine } from './store.js';
+import { sourceIcon, sourceLabel } from './model.js';
 
 export async function createApp(config) {
   const app = express();
@@ -95,6 +96,45 @@ export async function createApp(config) {
     try {
       const checks = await registry.readiness(req.query.source || '', scopeFromRequest(req));
       res.json({ success: true, setup: connectorSetupGuide(checks) });
+    } catch (error) {
+      res.status(400).json({ success: false, error: error.message });
+    }
+  });
+
+  // Distinct channel/container values per source for the scope, sourced from
+  // what's actually indexed in pgvector. Lets the UI render a per-source
+  // channel picker without calling Slack/Drive APIs directly.
+  app.get('/v1/connectors/channels', async (req, res) => {
+    try {
+      const scope = scopeFromRequest(req);
+      const source = String(req.query.source || '').toLowerCase();
+      if (!scope.tenantId || !scope.userId) {
+        return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+      }
+      await refreshStore(store);
+      const docs = store.listDocuments().filter((doc) => (
+        doc.tenantId === scope.tenantId && doc.userId === scope.userId && (!source || doc.source === source)
+      ));
+      const channelsBySource = {};
+      for (const doc of docs) {
+        if (!doc.container) continue;
+        if (!channelsBySource[doc.source]) channelsBySource[doc.source] = new Map();
+        const bucket = channelsBySource[doc.source];
+        const existing = bucket.get(doc.container);
+        if (existing) existing.count += 1;
+        else bucket.set(doc.container, {
+          name: doc.container,
+          id: doc.metadata?.channelId || doc.metadata?.folderId || doc.metadata?.mailbox || '',
+          sourceId: doc.sourceId,
+          count: 1,
+          lastMessageAt: doc.timestamp || null,
+        });
+      }
+      const result = {};
+      for (const [src, map] of Object.entries(channelsBySource)) {
+        result[src] = [...map.values()].sort((a, b) => b.count - a.count);
+      }
+      res.json({ success: true, channels: result });
     } catch (error) {
       res.status(400).json({ success: false, error: error.message });
     }
@@ -627,15 +667,107 @@ export async function createApp(config) {
   });
 
   app.post('/v1/search-runs', async (req, res) => {
-    const { tenantId, userId, query, sources, filters, limit, wait = false } = req.body || {};
-    if (!tenantId || !userId || !query) {
-      return res.status(400).json({ success: false, error: 'tenantId, userId, and query are required' });
+    const { tenantId, userId, query, sources, filters, limit = 10, wait = false, mode = 'search', offset = 0 } = req.body || {};
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
     }
     try {
       await refreshStore(store);
       const allowedSources = filterAllowedSources(config, tenantId, userId, sources);
       if (hasSourcePermissions(config) && !allowedSources.length) {
         return res.status(403).json({ success: false, error: 'No sources are enabled for this user' });
+      }
+      // Browse mode: skip the embedder, return documents ordered by
+      // timestamp DESC with offset/limit pagination. No lexical scoring.
+      if (mode === 'browse') {
+        const sourceSet = new Set((allowedSources || []).filter(Boolean));
+        const containerSet = new Set((filters?.containers || []).filter(Boolean));
+        const pageSize = Math.max(1, Math.min(Number(limit) || 25, 100));
+        const start = Math.max(0, Number(offset) || 0);
+        const candidates = store.listDocuments().filter((doc) => (
+          doc.tenantId === tenantId
+          && doc.userId === userId
+          && (!sourceSet.size || sourceSet.has(doc.source))
+          && (!containerSet.size || (doc.container && containerSet.has(doc.container)))
+        ));
+        candidates.sort((a, b) => {
+          const ta = new Date(a.timestamp || 0).getTime();
+          const tb = new Date(b.timestamp || 0).getTime();
+          return tb - ta;
+        });
+        const page = candidates.slice(start, start + pageSize).map((doc) => ({
+          id: doc.id,
+          source: doc.source,
+          title: doc.title,
+          oneLine: doc.summary || '',
+          body: doc.body || '',
+          author: doc.author,
+          timestamp: doc.timestamp,
+          container: doc.container,
+          score: 0,
+          sourceUri: doc.sourceUri,
+          children: doc.children || [],
+          metadata: doc.metadata || {},
+          sourceIcon: sourceIcon(doc.source),
+          sourceLabel: sourceLabel(doc.source),
+          attachments: doc.metadata?.files || doc.metadata?.attachments || [],
+          links: doc.metadata?.links || [],
+          expandable: Boolean((doc.children || []).length || (doc.metadata?.links || []).length),
+        }));
+        return res.json({ success: true, mode: 'browse', results: page, total: candidates.length, offset: start, limit: pageSize });
+      }
+      // NLP mode: pure cosine similarity over every in-scope chunk, sorted
+      // descending, paginated. No top-N cap and no lexical/recency re-rank —
+      // every analogous message is reachable via pagination.
+      if (mode === 'nlp') {
+        if (!query) {
+          return res.status(400).json({ success: false, error: 'query is required in nlp mode' });
+        }
+        const queryVector = await embedder.embed(query);
+        const sourceSet = new Set((allowedSources || []).filter(Boolean));
+        const containerSet = new Set((filters?.containers || []).filter(Boolean));
+        const threshold = Number.isFinite(Number(filters?.minSimilarity))
+          ? Number(filters.minSimilarity)
+          : 0;
+        const candidates = [];
+        for (const chunk of Object.values(store.state.chunks)) {
+          if (chunk.tenantId !== tenantId || chunk.userId !== userId) continue;
+          if (sourceSet.size && !sourceSet.has(chunk.source)) continue;
+          const document = store.state.documents[chunk.documentId];
+          if (!document) continue;
+          if (containerSet.size && (!document.container || !containerSet.has(document.container))) continue;
+          const distance = cosineSimilarity(queryVector, chunk.embedding);
+          if (distance < threshold) continue;
+          candidates.push({ document, chunk, distance });
+        }
+        candidates.sort((a, b) => b.distance - a.distance);
+        const total = candidates.length;
+        const pageSize = Math.max(1, Math.min(Number(limit) || 25, 100));
+        const start = Math.max(0, Number(offset) || 0);
+        const page = candidates.slice(start, start + pageSize).map(({ document, chunk, distance }) => ({
+          id: chunk.id,
+          documentId: document.id,
+          source: document.source,
+          title: document.title,
+          oneLine: chunk.summary || document.summary || '',
+          body: chunk.text || document.body || '',
+          author: document.author,
+          timestamp: document.timestamp,
+          container: document.container,
+          score: Number(distance.toFixed(4)),
+          sourceUri: document.sourceUri,
+          children: document.children || [],
+          metadata: { ...document.metadata, ...chunk.metadata },
+          sourceIcon: sourceIcon(document.source),
+          sourceLabel: sourceLabel(document.source),
+          attachments: document.metadata?.files || document.metadata?.attachments || [],
+          links: document.metadata?.links || [],
+          expandable: Boolean((document.children || []).length || (document.metadata?.links || []).length),
+        }));
+        return res.json({ success: true, mode: 'nlp', results: page, total, offset: start, limit: pageSize });
+      }
+      if (!query) {
+        return res.status(400).json({ success: false, error: 'query is required in search mode' });
       }
       const searchRun = await searchRuns.start({ tenantId, userId, query, sources: allowedSources, filters, limit, wait });
       return res.status(wait ? 200 : 202).json({ success: true, searchRun, results: searchRun.results || [] });

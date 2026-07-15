@@ -5,10 +5,12 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Database,
   FileDown,
   HardDrive,
+  List,
   Loader2,
   Mail,
   MessageSquare,
@@ -30,7 +32,11 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
   const [readiness, setReadiness] = useState([]);
   const [setup, setSetup] = useState([]);
   const [selectedSources, setSelectedSources] = useState(new Set());
+  const [channelsBySource, setChannelsBySource] = useState({}); // { slack: [{name,id,count}, ...], ... }
+  const [containerFilter, setContainerFilter] = useState({});   // { slack: 'whitehouse', ... }
   const [query, setQuery] = useState('');
+  const [mode, setMode] = useState('search');                    // 'search' | 'browse' | 'nlp'
+  const [pagination, setPagination] = useState({ offset: 0, limit: 25, total: 0 });
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('atlas_unified_search_auth_token') || '');
   const [scope, setScope] = useState({ tenantId, userId });
   const [connectionState, setConnectionState] = useState({});
@@ -101,6 +107,18 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
       const checks = readinessData.checks || [];
       setReadiness(checks);
       setSetup(setupData.setup || []);
+      // Fetch the channel list once sources are known. Cheap: derived from
+      // what's already indexed, so no upstream API calls.
+      try {
+        const channelsData = await apiRequest(
+          apiBaseUrl,
+          `/v1/connectors/channels?tenantId=${encodeURIComponent(scope.tenantId)}&userId=${encodeURIComponent(scope.userId)}`,
+          { authToken },
+        );
+        setChannelsBySource(channelsData.channels || {});
+      } catch {
+        setChannelsBySource({});
+      }
       setConnectionState((current) => {
         const next = { ...current };
         for (const source of DEFAULT_SOURCES) {
@@ -278,6 +296,12 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
     setResults([]);
     setRun(null);
     setRetrievalSummary(null);
+    if (mode === 'browse') {
+      return startBrowse(0);
+    }
+    if (mode === 'nlp') {
+      return startNlp(0);
+    }
     try {
       const data = await apiRequest(apiBaseUrl, '/v1/search-runs', {
         method: 'POST',
@@ -287,6 +311,14 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
           userId: scope.userId,
           query,
           sources: [...selectedSources],
+          // Active per-source channel filters — only sources with a channel
+          // selected get a `containers` entry. An empty filter map means
+          // "search all channels within the selected sources".
+          filters: {
+            ...(Object.keys(containerFilter).length > 0
+              ? { containers: Object.values(containerFilter).filter(Boolean) }
+              : {}),
+          },
           wait: false,
           limit: 25,
         }),
@@ -295,6 +327,78 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
       setResults(data.results || []);
       await loadRecentSearches();
       await streamSearchRun(data.searchRun.id);
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  // Browse mode: paginated chronological listing, no embedder, no lexical
+  // ranking. Uses the same /v1/search-runs endpoint with mode=browse + offset.
+  async function startBrowse(offset = 0) {
+    setState({ loading: true, error: '' });
+    setResults([]);
+    setRun(null);
+    setRetrievalSummary(null);
+    try {
+      const data = await apiRequest(apiBaseUrl, '/v1/search-runs', {
+        method: 'POST',
+        authToken,
+        body: JSON.stringify({
+          tenantId: scope.tenantId,
+          userId: scope.userId,
+          mode: 'browse',
+          sources: [...selectedSources],
+          filters: {
+            ...(Object.keys(containerFilter).length > 0
+              ? { containers: Object.values(containerFilter).filter(Boolean) }
+              : {}),
+          },
+          offset,
+          limit: pagination.limit,
+        }),
+      });
+      setResults(data.results || []);
+      setPagination({ offset: data.offset ?? offset, limit: data.limit ?? pagination.limit, total: data.total ?? 0 });
+      setState({ loading: false });
+    } catch (error) {
+      setState({ loading: false, error: error.message });
+    }
+  }
+
+  // NLP mode: pure cosine similarity over every in-scope chunk, paginated.
+  // No top-N cap and no lexical/recency re-rank — every analogous chunk is
+  // reachable via pagination.
+  async function startNlp(offset = 0) {
+    if (!query.trim()) {
+      setState({ loading: false, error: 'Type a query for NLP search.' });
+      return;
+    }
+    setState({ loading: true, error: '' });
+    setResults([]);
+    setRun(null);
+    setRetrievalSummary(null);
+    try {
+      const data = await apiRequest(apiBaseUrl, '/v1/search-runs', {
+        method: 'POST',
+        authToken,
+        body: JSON.stringify({
+          tenantId: scope.tenantId,
+          userId: scope.userId,
+          mode: 'nlp',
+          query,
+          sources: [...selectedSources],
+          filters: {
+            ...(Object.keys(containerFilter).length > 0
+              ? { containers: Object.values(containerFilter).filter(Boolean) }
+              : {}),
+          },
+          offset,
+          limit: pagination.limit,
+        }),
+      });
+      setResults(data.results || []);
+      setPagination({ offset: data.offset ?? offset, limit: data.limit ?? pagination.limit, total: data.total ?? 0 });
+      setState({ loading: false });
     } catch (error) {
       setState({ loading: false, error: error.message });
     }
@@ -496,6 +600,31 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
                     <button type="button" title="Delete indexed source data" onClick={() => clearSource(source)} disabled={maintenance.busy}><Trash2 size={14} /></button>
                   </div>
                 )}
+                {connected && selected && (channelsBySource[source] || []).length > 0 && (
+                  <div className="connector-channel-filter">
+                    <label htmlFor={`channel-filter-${source}`}>Channel:</label>
+                    <select
+                      id={`channel-filter-${source}`}
+                      data-testid={`channel-filter-${source}`}
+                      value={containerFilter[source] || ''}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setContainerFilter((current) => {
+                          const next = { ...current };
+                          if (value) next[source] = value; else delete next[source];
+                          return next;
+                        });
+                      }}
+                    >
+                      <option value="">All channels ({channelsBySource[source].length})</option>
+                      {channelsBySource[source].map((channel) => (
+                        <option key={`${source}:${channel.name}`} value={channel.name}>
+                          #{channel.name} ({channel.count})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -542,12 +671,51 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
       <main className="result-panel">
         <form className="search-bar" onSubmit={startSearch}>
           <Search size={20} />
-          <input data-testid="search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search email, Slack, Drive, meetings, knowledge, and data fabric" />
-          <button data-testid="search-submit" type="submit" disabled={state.loading || !query.trim()}>
-            {state.loading ? <Loader2 className="spin" size={18} /> : <Search size={18} />}
-            Search
+          <input
+            data-testid="search-input"
+            value={mode === 'browse' ? '' : query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={mode === 'browse' ? 'Browse mode — listing all messages, newest first' : mode === 'nlp' ? 'NLP search — find every analogous message (e.g. "longevity research", "AI security")' : 'Search email, Slack, Drive, meetings, knowledge, and data fabric'}
+            disabled={mode === 'browse'}
+          />
+          <button data-testid="search-submit" type="submit" disabled={state.loading || ((mode === 'search' || mode === 'nlp') && !query.trim())}>
+            {state.loading ? <Loader2 className="spin" size={18} /> : (mode === 'browse' ? <List size={18} /> : mode === 'nlp' ? <Sparkles size={18} /> : <Search size={18} />)}
+            {mode === 'browse' ? 'List messages' : mode === 'nlp' ? 'Find analogous' : 'Search'}
           </button>
         </form>
+
+        <div className="mode-toggle" role="tablist" aria-label="Result mode">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'search'}
+            data-testid="mode-search"
+            className={mode === 'search' ? 'active' : ''}
+            onClick={() => { setMode('search'); setPagination({ offset: 0, limit: 25, total: 0 }); }}
+          >
+            <Search size={14} />Search
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'nlp'}
+            data-testid="mode-nlp"
+            className={mode === 'nlp' ? 'active' : ''}
+            onClick={() => { setMode('nlp'); setPagination({ offset: 0, limit: 25, total: 0 }); }}
+          >
+            <Sparkles size={14} />NLP
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'browse'}
+            data-testid="mode-browse"
+            className={mode === 'browse' ? 'active' : ''}
+            onClick={() => { setMode('browse'); setQuery(''); }}
+          >
+            <List size={14} />Browse
+          </button>
+        </div>
 
         {state.error && <div className="error">{state.error}</div>}
 
@@ -615,8 +783,59 @@ export function UnifiedSearchWorkspace({ apiBaseUrl = '', tenantId, userId }) {
               )}
             </article>
           ))}
-          {!state.loading && results.length === 0 && <div className="empty">Run a search to see unified results.</div>}
+          {!state.loading && results.length === 0 && (
+            <div className="empty">{mode === 'browse' ? 'No messages in the selected channels.' : 'Run a search to see unified results.'}</div>
+          )}
         </section>
+
+        {(mode === 'browse' || mode === 'nlp') && pagination.total > 0 && (() => {
+          const pageSize = pagination.limit || 25;
+          const currentPage = Math.floor(pagination.offset / pageSize) + 1;
+          const totalPages = Math.max(1, Math.ceil(pagination.total / pageSize));
+          return (
+            <nav className="pagination" aria-label="Browse pagination">
+              <button
+                type="button"
+                data-testid="pagination-prev"
+                disabled={state.loading || pagination.offset === 0}
+                onClick={() => (mode === 'nlp' ? startNlp(Math.max(0, pagination.offset - pageSize)) : startBrowse(Math.max(0, pagination.offset - pageSize)))}
+              >
+                <ChevronLeft size={16} /> Prev
+              </button>
+              <span data-testid="pagination-status">
+                Page <strong>{currentPage}</strong> of {totalPages}
+                <small> · {pagination.total.toLocaleString()} {mode === 'nlp' ? 'matches' : 'messages'}</small>
+              </span>
+              <select
+                data-testid="pagination-size"
+                value={pageSize}
+                onChange={(event) => {
+                  const newLimit = Number(event.target.value);
+                  setPagination((current) => ({ ...current, limit: newLimit, offset: 0 }));
+                  const next = () => (mode === 'nlp' ? startNlp(0) : startBrowse(0));
+                  next();
+                  // Re-run with new size; uses state for limit but we want the
+                  // new value to apply immediately, so dispatch again after a
+                  // tick to pick up the updated state.
+                  setTimeout(next, 0);
+                }}
+              >
+                <option value="10">10 / page</option>
+                <option value="25">25 / page</option>
+                <option value="50">50 / page</option>
+                <option value="100">100 / page</option>
+              </select>
+              <button
+                type="button"
+                data-testid="pagination-next"
+                disabled={state.loading || pagination.offset + pageSize >= pagination.total}
+                onClick={() => (mode === 'nlp' ? startNlp(pagination.offset + pageSize) : startBrowse(pagination.offset + pageSize))}
+              >
+                Next <ChevronRight size={16} />
+              </button>
+            </nav>
+          );
+        })()}
       </main>
 
       <aside className="assistant-panel">

@@ -207,6 +207,114 @@ h2 {
   cursor: pointer;
 }
 
+.connector-channel-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid #edf0f6;
+  font-size: 12px;
+  color: #4a5874;
+}
+
+.connector-channel-filter label {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.connector-channel-filter select {
+  flex: 1;
+  border: 1px solid #dfe5ef;
+  border-radius: 7px;
+  background: #fff;
+  color: #273244;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mode-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: #f1f4fa;
+  border: 1px solid #dfe5ef;
+  border-radius: 9px;
+  margin: 8px 0 12px;
+}
+
+.mode-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: #4a5874;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+
+.mode-toggle button.active {
+  background: #fff;
+  color: #1f2a44;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 18px 12px;
+  margin-top: 8px;
+  border-top: 1px solid #edf0f6;
+}
+
+.pagination button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #dfe5ef;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #273244;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pagination span[data-testid="pagination-status"] {
+  font-size: 12px;
+  color: #4a5874;
+}
+
+.pagination span[data-testid="pagination-status"] small {
+  color: #6b7894;
+  margin-left: 4px;
+}
+
+.pagination select {
+  border: 1px solid #dfe5ef;
+  border-radius: 7px;
+  background: #fff;
+  color: #273244;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .requirements {
   display: flex;
   flex-wrap: wrap;

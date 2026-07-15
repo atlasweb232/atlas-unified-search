@@ -114,12 +114,28 @@ export class SlackConnector {
   }
 
   async discoverMemberChannels(scope = {}) {
-    const channels = await this.paginate('conversations.list', {
-      exclude_archived: 'true',
-      limit: '200',
-      types: 'public_channel,private_channel',
-    }, 'channels', scope);
-    return channels.filter((channel) => channel.is_member).map((channel) => channel.id);
+    // Two-pass discovery: public first (reliable), then private (groups:read
+    // can intermittently return missing_scope — retry up to a few times). The
+    // public and private sets are unioned; duplicates collapse via the Set.
+    const fetchTypes = async (types) => {
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const list = await this.paginate('conversations.list', {
+          exclude_archived: 'true',
+          limit: '200',
+          ...(types ? { types } : {}),
+        }, 'channels', scope);
+        if (list) return list;
+        await new Promise((r) => setTimeout(r, 750 * attempt));
+      }
+      return [];
+    };
+    const [publicChannels, privateChannels] = await Promise.all([
+      fetchTypes('public_channel'),
+      fetchTypes('private_channel'),
+    ]);
+    const merged = new Map();
+    for (const channel of [...publicChannels, ...privateChannels]) merged.set(channel.id, channel);
+    return [...merged.values()].filter((channel) => channel.is_member).map((channel) => channel.id);
   }
 
   async eventDocument({ tenantId, userId, event, scope }) {

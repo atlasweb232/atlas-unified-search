@@ -34,22 +34,26 @@ async function apiEmbedding(config, text, dimensions) {
 
 async function apiEmbeddings(config, texts, dimensions) {
   const endpoint = new URL('/v1/embeddings', ensureTrailingSlash(config.embeddingApiUrl));
-  const input = texts.map((text) => String(text || '').slice(0, 24000));
+  const sanitized = texts.map((text) => String(text || '').slice(0, 24000));
+  // Skip the network call entirely for empty/blank inputs — saves a round-trip
+  // and avoids bugs in some tokenizers when fed zero-length strings.
+  const nonEmpty = sanitized.filter((value) => value.trim().length > 0);
+  if (!nonEmpty.length) return sanitized.map(() => new Array(dimensions).fill(0));
+  const body = JSON.stringify({
+    model: config.embeddingModel || 'BAAI/bge-base-en-v1.5',
+    input: nonEmpty,
+    dimensions,
+  });
+  const headers = {
+    ...(config.embeddingApiKey ? { Authorization: `Bearer ${config.embeddingApiKey}` } : {}),
+    'Content-Type': 'application/json',
+  };
+  // First attempt: batch. If batch fails (some BGE versions crash on certain
+  // inputs), fall back to per-text single requests and skip un-embeddable ones.
   let lastError;
-  for (let attempt = 1; attempt <= 4; attempt += 1) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          ...(config.embeddingApiKey ? { Authorization: `Bearer ${config.embeddingApiKey}` } : {}),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: config.embeddingModel || 'BAAI/bge-base-en-v1.5',
-          input,
-          dimensions,
-        }),
-      });
+      const response = await fetch(endpoint, { method: 'POST', headers, body });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         const error = new Error(data.detail || data.error?.message || `Embedding API request failed with HTTP ${response.status}`);
@@ -57,22 +61,37 @@ async function apiEmbeddings(config, texts, dimensions) {
         throw error;
       }
       const vectors = (data.data || []).map((item) => normalize(item.embedding || []));
-      if (vectors.length !== input.length) {
-        throw new Error(`Embedding provider returned ${vectors.length} vectors, expected ${input.length}`);
+      if (vectors.length !== nonEmpty.length) {
+        throw new Error(`Embedding provider returned ${vectors.length} vectors, expected ${nonEmpty.length}`);
       }
-      for (const vector of vectors) {
-        if (vector.length !== dimensions) {
-          throw new Error(`Embedding provider returned ${vector.length} dims, expected ${dimensions}`);
-        }
-      }
-      return vectors;
+      // Re-map to original positions: empty inputs get zero vectors.
+      let cursor = 0;
+      return sanitized.map((value) => {
+        if (!value.trim().length) return new Array(dimensions).fill(0);
+        const v = vectors[cursor++];
+        if (v.length !== dimensions) throw new Error(`Embedding provider returned ${v.length} dims, expected ${dimensions}`);
+        return v;
+      });
     } catch (error) {
       lastError = error;
-      if (attempt >= 4 || (error.status && ![408, 425, 429, 500, 502, 503, 504].includes(error.status))) throw error;
-      await sleep(250 * (2 ** (attempt - 1)));
+      if (attempt >= 2) break;
+      await sleep(250);
     }
   }
-  throw lastError;
+  // Batch path failed twice — fall back to per-text single requests.
+  const fallback = [];
+  for (const value of sanitized) {
+    if (!value.trim().length) { fallback.push(new Array(dimensions).fill(0)); continue; }
+    try {
+      fallback.push(await apiEmbedding(config, value, dimensions));
+    } catch (error) {
+      // Last-resort: log and emit a zero vector so the chunk is at least
+      // queryable by lexical match (no vector contribution).
+      console.warn(`[embedding] skipped un-embeddable text (${error.message}); preview: ${JSON.stringify(value.slice(0, 80))}`);
+      fallback.push(new Array(dimensions).fill(0));
+    }
+  }
+  return fallback;
 }
 
 function ensureTrailingSlash(value) {

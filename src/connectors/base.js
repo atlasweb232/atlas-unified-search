@@ -48,10 +48,19 @@ export class ConnectorRegistry {
   }
 }
 
-export async function runConnectorSync({ connector, tenantId, userId, store, searchEngine, options = {} }) {
+export async function runConnectorSync({ connector, tenantId, userId, store, searchEngine, options = {}, onProgress = null }) {
   const documents = await connector.sync({ tenantId, userId, store, options });
-  const indexed = await searchEngine.indexDocuments(documents, { chunker: createChunks });
-  await store.save();
+  // Index and flush in chunks so a long sync survives HTTP client headers
+  // timeouts (Node fetch defaults to 5 min) and external interruptions —
+  // progress is durable, not just held in memory until the end.
+  const batchSize = 50;
+  let indexed = 0;
+  for (let offset = 0; offset < documents.length; offset += batchSize) {
+    const batch = documents.slice(offset, offset + batchSize);
+    indexed += await searchEngine.indexDocuments(batch, { chunker: createChunks });
+    await store.save();
+    if (onProgress) onProgress({ indexed, total: documents.length, batch: Math.floor(offset / batchSize) + 1 });
+  }
   return { documents, indexed };
 }
 
