@@ -6,9 +6,19 @@ import './styles.css';
 // After Slack OAuth callback the backend bounces to /#token=...&tenantId=...&userId=...
 const hashParams = new URLSearchParams(window.location.hash.slice(1));
 if (hashParams.get('token')) {
-  localStorage.setItem('atlas_unified_search_auth_token', hashParams.get('token'));
-  if (hashParams.get('tenantId')) localStorage.setItem('atlas_unified_search_tenant_id', hashParams.get('tenantId'));
-  if (hashParams.get('userId')) localStorage.setItem('atlas_unified_search_user_id', hashParams.get('userId'));
+  const oauthResult = {
+    type: 'atlas-unified-search-oauth',
+    token: hashParams.get('token'),
+    tenantId: hashParams.get('tenantId') || '',
+    userId: hashParams.get('userId') || '',
+  };
+  localStorage.setItem('atlas_unified_search_auth_token', oauthResult.token);
+  if (oauthResult.tenantId) localStorage.setItem('atlas_unified_search_tenant_id', oauthResult.tenantId);
+  if (oauthResult.userId) localStorage.setItem('atlas_unified_search_user_id', oauthResult.userId);
+  if (window.opener && !window.opener.closed) {
+    window.opener.postMessage(oauthResult, window.location.origin);
+    window.close();
+  }
   // Clean the hash so the token doesn't sit in the URL bar.
   window.history.replaceState(null, '', window.location.pathname);
 }

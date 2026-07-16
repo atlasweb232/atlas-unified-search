@@ -2,6 +2,7 @@ import { loadConfig } from './config.js';
 import { createConnectorRegistry } from './connectors/index.js';
 import { createEmbedder } from './embedding.js';
 import { JobRunner } from './jobRunner.js';
+import { InstallationStore } from './installationStore.js';
 import { createJobQueue } from './queue/serviceBusQueue.js';
 import { createSearchStore } from './stores/postgresStore.js';
 import { SearchEngine } from './store.js';
@@ -11,7 +12,11 @@ const store = await createSearchStore(config);
 await store.load();
 const embedder = await createEmbedder(config);
 const searchEngine = new SearchEngine({ store, embedder, weights: config.search, embeddingDim: config.embeddingDim });
-const registry = createConnectorRegistry(config);
+const installations = new InstallationStore(config);
+await installations.load();
+const registry = createConnectorRegistry(config, {
+  credentialResolver: (source, scope) => installations.credentialsFor(source, scope),
+});
 const queue = createJobQueue(config);
 const jobs = new JobRunner({ registry, store, searchEngine, queue: { name: 'inline' }, retry: config.syncRetry });
 
@@ -33,6 +38,7 @@ receiver.subscribe({
       userId: body.userId,
     });
     try {
+      await installations.refresh();
       await store.refresh?.();
       const result = await jobs.run(body.jobId, {
         source: body.source,
@@ -40,6 +46,7 @@ receiver.subscribe({
         userId: body.userId,
         options: body.options || {},
       });
+      await installations.markEventOutcome(body.jobId, 'completed');
       console.log('Service Bus sync completed', {
         jobId: body.jobId,
         source: body.source,
@@ -48,6 +55,7 @@ receiver.subscribe({
         indexed: result.indexed,
       });
     } catch (error) {
+      await installations.markEventOutcome(body.jobId, 'failed');
       console.error('Service Bus sync failed', {
         jobId: body.jobId,
         source: body.source,
@@ -61,12 +69,16 @@ receiver.subscribe({
   processError: async (error) => {
     console.error('Service Bus worker error', error);
   },
+}, {
+  maxConcurrentCalls: 1,
+  maxAutoLockRenewalDurationInMs: 30 * 60 * 1000,
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
     await receiver.close();
     await queue.close();
+    await installations.close();
     if (store.close) await store.close();
     process.exit(0);
   });

@@ -74,8 +74,8 @@ function formatApiError(data) {
 export const sourceMeta = {
   email: { label: 'Email', icon: 'MAIL' },
   slack: { label: 'Slack', icon: 'SL' },
-  google_drive: { label: 'GDrive', icon: 'GD' },
-  conference_bridge: { label: 'Bridge', icon: 'CB' },
-  knowledge_base: { label: 'Knowledge', icon: 'KB' },
+  google_drive: { label: 'Google Drive', icon: 'GD' },
+  conference_bridge: { label: 'Conference Bridge', icon: 'CB' },
+  knowledge_base: { label: 'Knowledge Base', icon: 'KB' },
   data_fabric: { label: 'Data Fabric', icon: 'DF' },
 };

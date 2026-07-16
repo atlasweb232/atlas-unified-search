@@ -1,16 +1,15 @@
 import cors from 'cors';
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import express from 'express';
-import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BlobServiceClient } from '@azure/storage-blob';
 import { AssistantActionService } from './assistant/actions.js';
 import { LocalArtifactProvider } from './assistant/artifacts.js';
 import { createChatProvider } from './assistant/providers.js';
 import { createConnectorRegistry } from './connectors/index.js';
-import { createEmbedder } from './embedding.js';
+import { createEmbedder, cosineSimilarity } from './embedding.js';
 import { JobRunner } from './jobRunner.js';
+import { InstallationStore } from './installationStore.js';
 import { requireApiAuth } from './middleware/auth.js';
 import { resolveIdentity, enforceTenantScope, deriveScope, scopeOf, allowedSourcesOf, mintIdentityToken } from './middleware/identity.js';
 import { OnboardingStore } from './onboardingStore.js';
@@ -21,7 +20,7 @@ import { parseSyncSchedules, summarizeSchedules } from './scheduleConfig.js';
 import { SearchRunCoordinator } from './searchRun.js';
 import { createSearchStore } from './stores/postgresStore.js';
 import { SearchEngine } from './store.js';
-import { createChunks, createDocument, oneLine, SOURCES } from './model.js';
+import { sourceIcon, sourceLabel } from './model.js';
 
 export async function createApp(config) {
   const app = express();
@@ -40,10 +39,15 @@ export async function createApp(config) {
   await store.load();
   const onboarding = new OnboardingStore({ dataDir: config.dataDir });
   await onboarding.load();
+  const installations = new InstallationStore(config);
+  await installations.load();
   const embedder = await createEmbedder(config);
   const searchEngine = new SearchEngine({ store, embedder, weights: config.search, embeddingDim: config.embeddingDim });
   const registry = createConnectorRegistry(config, {
-    credentialResolver: (source, scope) => onboarding.credentialsFor(source, scope),
+    credentialResolver: (source, scope) => ({
+      ...onboarding.credentialsFor(source, scope),
+      ...installations.credentialsFor(source, scope),
+    }),
   });
   const queue = createJobQueue(config);
   const jobs = new JobRunner({ registry, store, searchEngine, queue, retry: config.syncRetry });
@@ -54,7 +58,7 @@ export async function createApp(config) {
     artifactProvider: new LocalArtifactProvider({ dataDir: config.dataDir, azure: config.artifacts || {} }),
   });
 
-  app.locals.services = { store, searchEngine, registry, jobs, searchRuns, assistant, queue, onboarding };
+  app.locals.services = { store, searchEngine, registry, jobs, searchRuns, assistant, queue, onboarding, installations };
 
   app.get('/v1/health', (req, res) => {
     refreshStore(store).then(() => {
@@ -92,6 +96,45 @@ export async function createApp(config) {
     try {
       const checks = await registry.readiness(req.query.source || '', scopeFromRequest(req));
       res.json({ success: true, setup: connectorSetupGuide(checks) });
+    } catch (error) {
+      res.status(400).json({ success: false, error: error.message });
+    }
+  });
+
+  // Distinct channel/container values per source for the scope, sourced from
+  // what's actually indexed in pgvector. Lets the UI render a per-source
+  // channel picker without calling Slack/Drive APIs directly.
+  app.get('/v1/connectors/channels', async (req, res) => {
+    try {
+      const scope = scopeFromRequest(req);
+      const source = String(req.query.source || '').toLowerCase();
+      if (!scope.tenantId || !scope.userId) {
+        return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+      }
+      await refreshStore(store);
+      const docs = store.listDocuments().filter((doc) => (
+        doc.tenantId === scope.tenantId && doc.userId === scope.userId && (!source || doc.source === source)
+      ));
+      const channelsBySource = {};
+      for (const doc of docs) {
+        if (!doc.container) continue;
+        if (!channelsBySource[doc.source]) channelsBySource[doc.source] = new Map();
+        const bucket = channelsBySource[doc.source];
+        const existing = bucket.get(doc.container);
+        if (existing) existing.count += 1;
+        else bucket.set(doc.container, {
+          name: doc.container,
+          id: doc.metadata?.channelId || doc.metadata?.folderId || doc.metadata?.mailbox || '',
+          sourceId: doc.sourceId,
+          count: 1,
+          lastMessageAt: doc.timestamp || null,
+        });
+      }
+      const result = {};
+      for (const [src, map] of Object.entries(channelsBySource)) {
+        result[src] = [...map.values()].sort((a, b) => b.count - a.count);
+      }
+      res.json({ success: true, channels: result });
     } catch (error) {
       res.status(400).json({ success: false, error: error.message });
     }
@@ -195,7 +238,13 @@ export async function createApp(config) {
   app.get('/v1/onboarding/oauth/slack/start', (req, res) => {
     const secret = config.identity?.jwtSecret;
     if (!secret) return res.status(400).json({ success: false, error: 'IDENTITY_JWT_SECRET is required for OAuth' });
-    const state = signState({ provider: 'slack', tenantHint: req.query.tenant || '' }, secret);
+    let returnTo = '';
+    try {
+      returnTo = resolveOAuthReturnTo(config, req.query.returnTo);
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    const state = signState({ provider: 'slack', tenantHint: req.query.tenant || '', returnTo }, secret);
     const authorizeUrl = buildAuthorizeUrl({ config, state });
     if (req.query.redirect === '1') return res.redirect(authorizeUrl);
     return res.json({ success: true, authorizeUrl, state, stub: isStubMode(config) });
@@ -203,8 +252,9 @@ export async function createApp(config) {
 
   app.get('/v1/onboarding/oauth/slack/callback', async (req, res) => {
     const secret = config.identity?.jwtSecret;
+    let oauthState;
     try {
-      verifyState(req.query.state, secret);
+      oauthState = verifyState(req.query.state, secret);
     } catch (error) {
       return res.status(400).json({ success: false, error: error.message });
     }
@@ -228,6 +278,14 @@ export async function createApp(config) {
         source: 'slack',
         credentials: { botToken: result.botToken, channelIds },
       });
+      await installations.upsert({
+        source: 'slack',
+        providerTeamId: result.teamId,
+        tenantId,
+        userId,
+        credentials: { botToken: result.botToken, channelIds },
+        metadata: { teamName: result.teamName, email: result.email },
+      });
 
       // Notify auth-service so it can record a source_connections row keyed to
       // this user's Atlas account (fire-and-forget; never blocks the OAuth redirect).
@@ -247,7 +305,7 @@ export async function createApp(config) {
       const backfill = await autoBackfill(jobs, { source: 'slack', tenantId, userId });
 
       // Bounce back to the frontend with the token, or return JSON.
-      const redirect = config.slack?.oauth?.postLoginRedirect;
+      const redirect = oauthState.returnTo || config.slack?.oauth?.postLoginRedirect;
       if (redirect) {
         const url = new URL(redirect);
         url.hash = new URLSearchParams({ token: minted.token, tenantId, userId }).toString();
@@ -266,7 +324,13 @@ export async function createApp(config) {
   app.get('/v1/onboarding/oauth/gdrive/start', (req, res) => {
     const secret = config.identity?.jwtSecret;
     if (!secret) return res.status(400).json({ success: false, error: 'IDENTITY_JWT_SECRET is required for OAuth' });
-    const state = gdriveSignState({ provider: 'gdrive' }, secret);
+    let returnTo = '';
+    try {
+      returnTo = resolveOAuthReturnTo(config, req.query.returnTo);
+    } catch (error) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    const state = gdriveSignState({ provider: 'gdrive', returnTo }, secret);
     const authorizeUrl = gdriveAuthorizeUrl({ config, state });
     if (req.query.redirect === '1') return res.redirect(authorizeUrl);
     return res.json({ success: true, authorizeUrl, state, stub: gdriveStubMode(config) });
@@ -274,7 +338,8 @@ export async function createApp(config) {
 
   app.get('/v1/onboarding/oauth/gdrive/callback', async (req, res) => {
     const secret = config.identity?.jwtSecret;
-    try { gdriveVerifyState(req.query.state, secret); } catch (error) {
+    let oauthState;
+    try { oauthState = gdriveVerifyState(req.query.state, secret); } catch (error) {
       return res.status(400).json({ success: false, error: error.message });
     }
     if (req.query.error) return res.status(400).json({ success: false, error: `Google denied: ${req.query.error}` });
@@ -311,7 +376,7 @@ export async function createApp(config) {
       }, secret);
       const backfill = await autoBackfill(jobs, { source: 'google_drive', tenantId, userId });
 
-      const redirect = config.gdrive?.oauth?.postLoginRedirect;
+      const redirect = oauthState.returnTo || config.gdrive?.oauth?.postLoginRedirect;
       if (redirect) {
         const url = new URL(redirect);
         url.hash = new URLSearchParams({ token: minted.token, tenantId, userId }).toString();
@@ -334,12 +399,26 @@ export async function createApp(config) {
     if (req.body?.type === 'url_verification') {
       return res.json({ challenge: req.body.challenge || '' });
     }
-    const tenantId = config.slack?.eventTenantId || '';
-    const userId = config.slack?.eventUserId || '';
-    if (!tenantId || !userId) {
-      return res.status(400).json({ success: false, error: 'SLACK_EVENT_TENANT_ID and SLACK_EVENT_USER_ID are required for Slack events' });
-    }
     const event = req.body?.event || {};
+    const providerTeamId = req.body?.team_id || req.body?.team?.id || event.team || '';
+    await installations.refresh();
+    const installation = installations.byProviderTeam('slack', providerTeamId);
+    const tenantId = installation?.tenantId || config.slack?.eventTenantId || '';
+    const userId = installation?.userId || config.slack?.eventUserId || '';
+    if (!tenantId || !userId) {
+      return res.status(404).json({ success: false, error: `No connected Slack installation for team: ${providerTeamId || 'unknown'}` });
+    }
+    const eventId = req.body?.event_id || event.event_id || '';
+    const claim = await installations.claimEvent({
+      eventId,
+      source: 'slack',
+      providerTeamId,
+      tenantId,
+      userId,
+    });
+    if (!claim.claimed) {
+      return res.status(200).json({ success: true, duplicate: true, eventId });
+    }
     try {
       const result = await enqueueConnectorEvent({
         config,
@@ -351,14 +430,16 @@ export async function createApp(config) {
         userId,
         event: {
           ...event,
-          event_id: req.body?.event_id || event.event_id,
+          event_id: eventId,
           event_ts: req.body?.event_time ? String(req.body.event_time) : event.event_ts,
         },
         options: {},
         wait: false,
       });
+      await installations.markEventJob(eventId, result.job?.id || '');
       return res.status(202).json({ success: true, job: result.job, eventTrigger: result.eventTrigger });
     } catch (error) {
+      await installations.releaseEvent(eventId);
       return res.status(error.statusCode || 400).json({ success: false, error: error.message, details: error.details || undefined });
     }
   });
@@ -561,172 +642,6 @@ export async function createApp(config) {
     }
   });
 
-  app.post('/v1/meeting/archive', async (req, res) => {
-    return handleMeetingArchiveOperation({ req, res, config, store, searchEngine, operation: 'archive' });
-  });
-
-  app.post('/v1/meeting/ingest', async (req, res) => {
-    return handleMeetingArchiveOperation({ req, res, config, store, searchEngine, operation: 'ingest' });
-  });
-
-  app.post('/v1/meeting/recording/upload', async (req, res) => {
-    const request = req.body || {};
-    const scope = deriveScope(req, res, {
-      tenantId: request.tenantId || request.TenantId || '',
-      userId: request.userId || request.UserId || req.headers['x-user-id'] || unboundOwnerEmail(req, request),
-    });
-    if (!scope) return undefined;
-    const { tenantId, userId } = scope;
-    if (!tenantId || !userId) {
-      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
-    }
-    if (!meetingSourceAllowed({ req, config, tenantId, userId })) {
-      return res.status(403).json({ success: false, error: 'Source is not enabled for this user: conference_bridge' });
-    }
-
-    const meetingId = stringField(request, 'meetingId', 'MeetingId');
-    const requestId = stringField(request, 'requestId', 'RequestId') || meetingId;
-    if (!meetingId || !requestId) {
-      return res.status(400).json({ success: false, error: 'meetingId and requestId are required' });
-    }
-
-    try {
-      await refreshStore(store);
-      const recordingId = stableId('recording', tenantId, userId, meetingId, requestId);
-      const storage = meetingRecordingStorage(config, recordingId, recordingExtension(request));
-      const uploadUrl = absoluteUrl(req, `/v1/meeting/recording/blob/${encodeURIComponent(recordingId)}?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(userId)}`);
-      const contentType = stringField(request, 'contentType', 'ContentType') || 'application/octet-stream';
-      const artifact = store.upsertArtifact({
-        id: recordingId,
-        tenantId,
-        userId,
-        type: 'meeting_recording_upload',
-        status: 'upload_requested',
-        meetingId,
-        requestId,
-        recordingUri: storage.recordingUri,
-        storageBackend: storage.backend,
-        objectPath: storage.objectPath,
-        blobName: storage.blobName,
-        contentType,
-        expectedSizeBytes: numberField(request, 'sizeBytes', 'SizeBytes'),
-        checksumSha256: stringField(request, 'checksumSha256', 'ChecksumSha256'),
-        metadata: request.metadata || request.Metadata || {},
-      });
-      store.audit({
-        eventType: 'meeting_recording_upload_requested',
-        tenantId,
-        userId,
-        source: SOURCES.conference,
-        metadata: { meetingId, requestId, recordingId },
-      });
-      await store.save();
-      return res.status(201).json({
-        success: true,
-        ok: true,
-        recordingId,
-        uploadId: recordingId,
-        uploadUrl,
-        recordingUri: storage.recordingUri,
-        objectUri: storage.recordingUri,
-        headers: { 'content-type': contentType },
-        expiresAtUtc: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-        status: artifact.status,
-      });
-    } catch (error) {
-      return res.status(500).json({ success: false, error: error.message });
-    }
-  });
-
-  app.put('/v1/meeting/recording/blob/:recordingId', express.raw({ type: '*/*', limit: '512mb' }), async (req, res) => {
-    const recordingId = req.params.recordingId;
-    try {
-      await refreshStore(store);
-      const artifact = store.getArtifact(recordingId);
-      if (!artifact) return res.status(404).json({ success: false, error: 'Recording upload session not found' });
-      if (!matchesScope(req, artifact)) return res.status(403).json({ success: false, error: 'Forbidden' });
-      const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
-      if (!bytes.length) return res.status(400).json({ success: false, error: 'Recording upload body is required' });
-      await storeMeetingRecordingBytes({ config, artifact, bytes });
-      store.upsertArtifact({
-        ...artifact,
-        status: 'uploaded',
-        uploadedBytes: bytes.length,
-        uploadedChecksumSha256: sha256(bytes),
-        uploadedAtUtc: new Date().toISOString(),
-      });
-      store.audit({
-        eventType: 'meeting_recording_uploaded',
-        tenantId: artifact.tenantId,
-        userId: artifact.userId,
-        source: SOURCES.conference,
-        metadata: { meetingId: artifact.meetingId, requestId: artifact.requestId, recordingId },
-      });
-      await store.save();
-      return res.json({ success: true, ok: true, recordingId, status: 'uploaded' });
-    } catch (error) {
-      return res.status(500).json({ success: false, error: error.message });
-    }
-  });
-
-  app.post('/v1/meeting/recording/complete', async (req, res) => {
-    const request = req.body || {};
-    const recordingId = stringField(request, 'recordingId', 'RecordingId');
-    const scope = deriveScope(req, res, {
-      tenantId: request.tenantId || request.TenantId || '',
-      userId: request.userId || request.UserId || req.headers['x-user-id'] || unboundOwnerEmail(req, request),
-    });
-    if (!scope) return undefined;
-    if (!recordingId) return res.status(400).json({ success: false, error: 'recordingId is required' });
-    try {
-      await refreshStore(store);
-      const artifact = store.getArtifact(recordingId);
-      if (!artifact) return res.status(404).json({ success: false, error: 'Recording upload session not found' });
-      if (artifact.tenantId !== scope.tenantId || artifact.userId !== scope.userId) {
-        return res.status(403).json({ success: false, error: 'Forbidden' });
-      }
-      if (artifact.status !== 'uploaded' && artifact.status !== 'accepted') {
-        return res.status(409).json({ success: false, error: 'Recording bytes have not been uploaded.' });
-      }
-      const requestedSize = numberField(request, 'sizeBytes', 'SizeBytes');
-      if (requestedSize && artifact.uploadedBytes && requestedSize !== artifact.uploadedBytes) {
-        return res.status(409).json({ success: false, error: 'Recording upload size does not match completed size.' });
-      }
-      const requestedChecksum = stringField(request, 'checksumSha256', 'ChecksumSha256');
-      if (requestedChecksum && artifact.uploadedChecksumSha256 && requestedChecksum !== artifact.uploadedChecksumSha256) {
-        return res.status(409).json({ success: false, error: 'Recording upload checksum does not match completed checksum.' });
-      }
-      const receipt = operationReceipt('recording', recordingId);
-      store.upsertArtifact({
-        ...artifact,
-        status: 'accepted',
-        completedAtUtc: receipt.acceptedAtUtc,
-        completedSizeBytes: numberField(request, 'sizeBytes', 'SizeBytes') || artifact.uploadedBytes || 0,
-        completedChecksumSha256: stringField(request, 'checksumSha256', 'ChecksumSha256') || artifact.checksumSha256 || '',
-        receipt,
-      });
-      store.audit({
-        eventType: 'meeting_recording_completed',
-        tenantId: scope.tenantId,
-        userId: scope.userId,
-        source: SOURCES.conference,
-        metadata: { meetingId: artifact.meetingId, requestId: artifact.requestId, recordingId },
-      });
-      await store.save();
-      return res.json({
-        success: true,
-        ok: true,
-        recordingId,
-        receiptId: receipt.receiptId,
-        status: receipt.status,
-        message: receipt.message,
-        acceptedAtUtc: receipt.acceptedAtUtc,
-      });
-    } catch (error) {
-      return res.status(500).json({ success: false, error: error.message });
-    }
-  });
-
   app.post('/v1/search', async (req, res) => {
     const { tenantId: bodyTenant, userId: bodyUser, query, sources, filters, limit } = req.body || {};
     const scope = deriveScope(req, res, { tenantId: bodyTenant, userId: bodyUser });
@@ -752,9 +667,9 @@ export async function createApp(config) {
   });
 
   app.post('/v1/search-runs', async (req, res) => {
-    const { tenantId, userId, query, sources, filters, limit, wait = false } = req.body || {};
-    if (!tenantId || !userId || !query) {
-      return res.status(400).json({ success: false, error: 'tenantId, userId, and query are required' });
+    const { tenantId, userId, query, sources, filters, limit = 10, wait = false, mode = 'search', offset = 0 } = req.body || {};
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
     }
     try {
       await refreshStore(store);
@@ -762,11 +677,113 @@ export async function createApp(config) {
       if (hasSourcePermissions(config) && !allowedSources.length) {
         return res.status(403).json({ success: false, error: 'No sources are enabled for this user' });
       }
+      // Browse mode: skip the embedder, return documents ordered by
+      // timestamp DESC with offset/limit pagination. No lexical scoring.
+      if (mode === 'browse') {
+        const sourceSet = new Set((allowedSources || []).filter(Boolean));
+        const containerSet = new Set((filters?.containers || []).filter(Boolean));
+        const pageSize = Math.max(1, Math.min(Number(limit) || 25, 100));
+        const start = Math.max(0, Number(offset) || 0);
+        const candidates = store.listDocuments().filter((doc) => (
+          doc.tenantId === tenantId
+          && doc.userId === userId
+          && (!sourceSet.size || sourceSet.has(doc.source))
+          && (!containerSet.size || (doc.container && containerSet.has(doc.container)))
+        ));
+        candidates.sort((a, b) => {
+          const ta = new Date(a.timestamp || 0).getTime();
+          const tb = new Date(b.timestamp || 0).getTime();
+          return tb - ta;
+        });
+        const page = candidates.slice(start, start + pageSize).map((doc) => ({
+          id: doc.id,
+          source: doc.source,
+          title: doc.title,
+          oneLine: doc.summary || '',
+          body: doc.body || '',
+          author: doc.author,
+          timestamp: doc.timestamp,
+          container: doc.container,
+          score: 0,
+          sourceUri: doc.sourceUri,
+          children: doc.children || [],
+          metadata: doc.metadata || {},
+          sourceIcon: sourceIcon(doc.source),
+          sourceLabel: sourceLabel(doc.source),
+          attachments: doc.metadata?.files || doc.metadata?.attachments || [],
+          links: doc.metadata?.links || [],
+          expandable: Boolean((doc.children || []).length || (doc.metadata?.links || []).length),
+        }));
+        return res.json({ success: true, mode: 'browse', results: page, total: candidates.length, offset: start, limit: pageSize });
+      }
+      // NLP mode: pure cosine similarity over every in-scope chunk, sorted
+      // descending, paginated. No top-N cap and no lexical/recency re-rank —
+      // every analogous message is reachable via pagination.
+      if (mode === 'nlp') {
+        if (!query) {
+          return res.status(400).json({ success: false, error: 'query is required in nlp mode' });
+        }
+        const queryVector = await embedder.embed(query);
+        const sourceSet = new Set((allowedSources || []).filter(Boolean));
+        const containerSet = new Set((filters?.containers || []).filter(Boolean));
+        const threshold = Number.isFinite(Number(filters?.minSimilarity))
+          ? Number(filters.minSimilarity)
+          : 0;
+        const candidates = [];
+        for (const chunk of Object.values(store.state.chunks)) {
+          if (chunk.tenantId !== tenantId || chunk.userId !== userId) continue;
+          if (sourceSet.size && !sourceSet.has(chunk.source)) continue;
+          const document = store.state.documents[chunk.documentId];
+          if (!document) continue;
+          if (containerSet.size && (!document.container || !containerSet.has(document.container))) continue;
+          const distance = cosineSimilarity(queryVector, chunk.embedding);
+          if (distance < threshold) continue;
+          candidates.push({ document, chunk, distance });
+        }
+        candidates.sort((a, b) => b.distance - a.distance);
+        const total = candidates.length;
+        const pageSize = Math.max(1, Math.min(Number(limit) || 25, 100));
+        const start = Math.max(0, Number(offset) || 0);
+        const page = candidates.slice(start, start + pageSize).map(({ document, chunk, distance }) => ({
+          id: chunk.id,
+          documentId: document.id,
+          source: document.source,
+          title: document.title,
+          oneLine: chunk.summary || document.summary || '',
+          body: chunk.text || document.body || '',
+          author: document.author,
+          timestamp: document.timestamp,
+          container: document.container,
+          score: Number(distance.toFixed(4)),
+          sourceUri: document.sourceUri,
+          children: document.children || [],
+          metadata: { ...document.metadata, ...chunk.metadata },
+          sourceIcon: sourceIcon(document.source),
+          sourceLabel: sourceLabel(document.source),
+          attachments: document.metadata?.files || document.metadata?.attachments || [],
+          links: document.metadata?.links || [],
+          expandable: Boolean((document.children || []).length || (document.metadata?.links || []).length),
+        }));
+        return res.json({ success: true, mode: 'nlp', results: page, total, offset: start, limit: pageSize });
+      }
+      if (!query) {
+        return res.status(400).json({ success: false, error: 'query is required in search mode' });
+      }
       const searchRun = await searchRuns.start({ tenantId, userId, query, sources: allowedSources, filters, limit, wait });
       return res.status(wait ? 200 : 202).json({ success: true, searchRun, results: searchRun.results || [] });
     } catch (error) {
       return res.status(500).json({ success: false, error: error.message });
     }
+  });
+
+  app.get('/v1/search-runs', async (req, res) => {
+    const { tenantId, userId, limit = '20' } = req.query || {};
+    if (!tenantId || !userId) {
+      return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
+    }
+    await refreshStore(store);
+    const runs = store.listSearchRuns({ tenantId, userId, limit });
+    return res.json({ success: true, runs });
   });
 
   app.get('/v1/search-runs/:searchRunId/events', async (req, res) => {
@@ -1026,303 +1043,6 @@ export async function createApp(config) {
   return app;
 }
 
-async function handleMeetingArchiveOperation({ req, res, config, store, searchEngine, operation }) {
-  const envelope = req.body || {};
-  const archive = envelope.archive || envelope.Archive || envelope;
-  const scope = deriveScope(req, res, {
-    tenantId: archive.tenantId || archive.TenantId || envelope.tenantId || envelope.TenantId || req.headers['x-tenant-id'] || '',
-    userId: archive.userId || archive.UserId || envelope.userId || envelope.UserId || req.headers['x-user-id'] || unboundOwnerEmail(req, archive),
-  });
-  if (!scope) return undefined;
-  const { tenantId, userId } = scope;
-  if (!tenantId || !userId) {
-    return res.status(400).json({ success: false, error: 'tenantId and userId are required' });
-  }
-  if (!meetingSourceAllowed({ req, config, tenantId, userId })) {
-    return res.status(403).json({ success: false, error: 'Source is not enabled for this user: conference_bridge' });
-  }
-
-  const meetingId = stringField(archive, 'meetingId', 'MeetingId');
-  const requestId = stringField(archive, 'requestId', 'RequestId') || meetingId;
-  if (!meetingId || !requestId) {
-    return res.status(400).json({ success: false, error: 'archive.meetingId and archive.requestId are required' });
-  }
-
-  try {
-    await refreshStore(store);
-    const document = meetingArchiveDocument({ tenantId, userId, archive, artifacts: envelope.artifacts || envelope.Artifacts || [] });
-    await searchEngine.indexDocuments([document], { chunker: createChunks });
-    const receipt = operationReceipt(operation, `${tenantId}:${userId}:${meetingId}:${requestId}`);
-    store.audit({
-      eventType: operation === 'archive' ? 'meeting_archive_accepted' : 'meeting_ingest_accepted',
-      tenantId,
-      userId,
-      source: SOURCES.conference,
-      metadata: {
-        meetingId,
-        requestId,
-        documentId: document.id,
-        receiptId: receipt.receiptId,
-        selectedSourceScopes: archive.selectedSourceScopes || archive.SelectedSourceScopes || [],
-        securityLabels: archive.securityLabels || archive.SecurityLabels || [],
-      },
-    });
-    await store.save();
-    return res.status(202).json({
-      success: true,
-      ok: true,
-      id: receipt.receiptId,
-      receiptId: receipt.receiptId,
-      [`${operation}Id`]: receipt.receiptId,
-      status: receipt.status,
-      message: receipt.message,
-      acceptedAtUtc: receipt.acceptedAtUtc,
-      documentId: document.id,
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
-  }
-}
-
-function meetingArchiveDocument({ tenantId, userId, archive, artifacts }) {
-  const meetingId = stringField(archive, 'meetingId', 'MeetingId');
-  const requestId = stringField(archive, 'requestId', 'RequestId') || meetingId;
-  const transcript = arrayField(archive, 'transcript', 'Transcript').join('\n');
-  const artifactText = Array.isArray(artifacts)
-    ? artifacts.map((artifact) => [
-      stringField(artifact, 'kind', 'Kind'),
-      stringField(artifact, 'inlineContent', 'InlineContent'),
-      stringField(artifact, 'uri', 'Uri'),
-    ].filter(Boolean).join('\n')).filter(Boolean).join('\n\n')
-    : '';
-  const actionItems = arrayField(archive, 'actionItems', 'ActionItems');
-  const pendingQuestions = arrayField(archive, 'pendingQuestions', 'PendingQuestions');
-  const decisionLog = arrayField(archive, 'decisionLog', 'DecisionLog');
-  const participants = arrayField(archive, 'participants', 'Participants');
-  const participantContexts = arrayField(archive, 'participantContexts', 'ParticipantContexts');
-  const knowledgeReferences = arrayField(archive, 'knowledgeReferences', 'KnowledgeReferences');
-  const instructions = arrayField(archive, 'instructions', 'Instructions');
-  const summary = stringField(archive, 'summary', 'Summary')
-    || oneLine(transcript || artifactText || `Meeting ${meetingId}`);
-  const title = `Meeting Archive: ${summary}`;
-  const body = [
-    `Meeting ID: ${meetingId}`,
-    `Request ID: ${requestId}`,
-    `Meet URL: ${stringField(archive, 'meetUrl', 'MeetUrl')}`,
-    `Owner: ${stringField(archive, 'ownerDisplayName', 'OwnerDisplayName')} ${stringField(archive, 'ownerEmail', 'OwnerEmail')}`,
-    `Bot: ${stringField(archive, 'botDisplayName', 'BotDisplayName')}`,
-    `Agenda: ${stringField(archive, 'agenda', 'Agenda')}`,
-    `Active participant: ${stringField(archive, 'activeParticipant', 'ActiveParticipant')} ${stringField(archive, 'activeParticipantId', 'ActiveParticipantId')}`,
-    `Participants: ${participants.map(displayValue).join(', ')}`,
-    `Action items: ${actionItems.map(displayValue).join('; ')}`,
-    `Pending questions: ${pendingQuestions.map(displayValue).join('; ')}`,
-    `Decisions: ${decisionLog.map(displayValue).join('; ')}`,
-    `Instructions: ${instructions.map(displayValue).join('; ')}`,
-    `Knowledge references: ${knowledgeReferences.map(displayValue).join('; ')}`,
-    `Participant contexts: ${participantContexts.map(displayValue).join('; ')}`,
-    transcript,
-    artifactText,
-  ].filter(Boolean).join('\n\n');
-
-  return createDocument({
-    tenantId,
-    userId,
-    source: SOURCES.conference,
-    sourceId: `meeting:${meetingId}`,
-    sourceUri: stringField(archive, 'meetUrl', 'MeetUrl') || `atlas-meeting://${meetingId}`,
-    title,
-    summary,
-    body,
-    author: stringField(archive, 'ownerDisplayName', 'OwnerDisplayName') || stringField(archive, 'ownerEmail', 'OwnerEmail') || userId,
-    timestamp: stringField(archive, 'archivedAtUtc', 'ArchivedAtUtc') || new Date().toISOString(),
-    container: 'meeting-archives',
-    metadata: {
-      kind: 'meeting_archive',
-      meetingId,
-      requestId,
-      meetUrl: stringField(archive, 'meetUrl', 'MeetUrl'),
-      ownerEmail: stringField(archive, 'ownerEmail', 'OwnerEmail') || userId,
-      ownerDisplayName: stringField(archive, 'ownerDisplayName', 'OwnerDisplayName'),
-      botDisplayName: stringField(archive, 'botDisplayName', 'BotDisplayName'),
-      participationState: archive.participationState ?? archive.ParticipationState,
-      activeParticipantId: stringField(archive, 'activeParticipantId', 'ActiveParticipantId'),
-      effectiveSearchParticipantId: stringField(archive, 'effectiveSearchParticipantId', 'EffectiveSearchParticipantId'),
-      selectedSourceScopes: arrayField(archive, 'selectedSourceScopes', 'SelectedSourceScopes'),
-      securityLabels: arrayField(archive, 'securityLabels', 'SecurityLabels'),
-      policy: archive.policy || archive.Policy || {},
-      participantHints: arrayField(archive, 'participantHints', 'ParticipantHints'),
-      participants,
-      actionItems,
-      pendingQuestions,
-      decisionLog,
-      relatedArtifacts: arrayField(archive, 'relatedArtifacts', 'RelatedArtifacts'),
-      knowledgeReferences,
-      recording: archive.recording || archive.Recording || null,
-      artifactKinds: Array.isArray(artifacts) ? artifacts.map((artifact) => stringField(artifact, 'kind', 'Kind')).filter(Boolean) : [],
-    },
-    children: [
-      ...transcriptSegments(transcript),
-      ...actionItems.map((item, index) => ({ kind: 'action_item', title: `Action ${index + 1}`, text: displayValue(item), metadata: { index } })),
-      ...pendingQuestions.map((item, index) => ({ kind: 'pending_question', title: `Question ${index + 1}`, text: displayValue(item), metadata: { index } })),
-      ...decisionLog.map((item, index) => ({ kind: 'decision', title: `Decision ${index + 1}`, text: displayValue(item), metadata: { index } })),
-    ],
-  });
-}
-
-function transcriptSegments(transcript) {
-  return String(transcript || '')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, 500)
-    .map((line, index) => {
-      const [speaker, ...rest] = line.includes(':') ? line.split(':') : ['', line];
-      return {
-        kind: 'transcript_segment',
-        title: speaker || `Turn ${index + 1}`,
-        text: rest.join(':').trim() || line,
-        metadata: { index, speaker: speaker || '' },
-      };
-    });
-}
-
-function meetingSourceAllowed({ req, config, tenantId, userId }) {
-  const allowed = allowedSourcesOf(req);
-  if (Array.isArray(allowed) && !allowed.includes(SOURCES.conference) && !allowed.includes('*')) return false;
-  return sourceAllowed(config, tenantId, userId, SOURCES.conference);
-}
-
-function unboundOwnerEmail(req, payload) {
-  if (req.identity?.bound) return '';
-  return stringField(payload, 'ownerEmail', 'OwnerEmail');
-}
-
-function operationReceipt(operation, key) {
-  return {
-    receiptId: stableId(operation, key),
-    status: 'accepted',
-    message: `${operation} accepted`,
-    acceptedAtUtc: new Date().toISOString(),
-  };
-}
-
-function stableId(prefix, ...parts) {
-  return `${prefix}_${hashQuery(parts.join(':')).replace(/^q_/, '')}`;
-}
-
-function stringField(value, ...names) {
-  for (const name of names) {
-    const entry = value?.[name];
-    if (entry !== undefined && entry !== null && String(entry).trim()) return String(entry);
-  }
-  return '';
-}
-
-function numberField(value, ...names) {
-  for (const name of names) {
-    const entry = Number(value?.[name]);
-    if (Number.isFinite(entry)) return entry;
-  }
-  return 0;
-}
-
-function arrayField(value, ...names) {
-  for (const name of names) {
-    const entry = value?.[name];
-    if (Array.isArray(entry)) return entry;
-    if (entry !== undefined && entry !== null && String(entry).trim()) return [entry];
-  }
-  return [];
-}
-
-function displayValue(value) {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return [
-    value.displayName || value.DisplayName,
-    value.identityHint || value.IdentityHint,
-    value.title || value.Title,
-    value.summary || value.Summary,
-    value.content || value.Content,
-    value.text || value.Text,
-    value.uri || value.Uri,
-  ].filter(Boolean).join(' ') || JSON.stringify(value);
-}
-
-function recordingExtension(request) {
-  const fileName = stringField(request, 'fileName', 'FileName');
-  const fromFile = path.extname(fileName || '');
-  if (fromFile) return fromFile;
-  const contentType = stringField(request, 'contentType', 'ContentType').toLowerCase();
-  if (contentType.includes('wav')) return '.wav';
-  if (contentType.includes('webm')) return '.webm';
-  if (contentType.includes('mp4')) return '.mp4';
-  return '.bin';
-}
-
-function meetingRecordingStorage(config, recordingId, extension) {
-  const safeExtension = extension || '.bin';
-  const blobName = `meeting-recordings/${recordingId}${safeExtension}`;
-  if (config.artifacts?.azureStorageConnectionString && config.artifacts?.container) {
-    const publicBase = config.artifacts?.publicBaseUrl || '';
-    return {
-      backend: 'azure_blob',
-      blobName,
-      objectPath: '',
-      recordingUri: publicBase
-        ? `${publicBase.replace(/\/+$/, '')}/${blobName}`
-        : `azure-blob://${config.artifacts.container}/${blobName}`,
-    };
-  }
-  const objectPath = path.join(config.dataDir, 'meeting-recordings', `${recordingId}${safeExtension}`);
-  return {
-    backend: 'local',
-    blobName: '',
-    objectPath,
-    recordingUri: `atlas-meeting-recording://${recordingId}`,
-  };
-}
-
-async function storeMeetingRecordingBytes({ config, artifact, bytes }) {
-  if (artifact.storageBackend === 'azure_blob') {
-    const service = BlobServiceClient.fromConnectionString(config.artifacts.azureStorageConnectionString);
-    const container = service.getContainerClient(config.artifacts.container);
-    await container.createIfNotExists();
-    const blob = container.getBlockBlobClient(artifact.blobName);
-    await blob.uploadData(bytes, {
-      blobHTTPHeaders: {
-        blobContentType: artifact.contentType || 'application/octet-stream',
-      },
-      metadata: {
-        tenantId: safeBlobMetadata(artifact.tenantId),
-        userId: safeBlobMetadata(artifact.userId),
-        meetingId: safeBlobMetadata(artifact.meetingId),
-        requestId: safeBlobMetadata(artifact.requestId),
-      },
-    });
-    return;
-  }
-  await mkdir(path.dirname(artifact.objectPath), { recursive: true });
-  await writeFile(artifact.objectPath, bytes);
-}
-
-function sha256(bytes) {
-  return createHash('sha256').update(bytes).digest('hex');
-}
-
-function safeBlobMetadata(value) {
-  return String(value || '').replace(/[^\w.-]/g, '_').slice(0, 256);
-}
-
-function absoluteUrl(req, pathname) {
-  const configured = req.app?.locals?.config?.publicBaseUrl || '';
-  if (configured) return `${configured.replace(/\/+$/, '')}${pathname}`;
-  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-  const host = req.headers['x-forwarded-host'] || req.headers.host;
-  return `${proto}://${host}${pathname}`;
-}
-
 async function refreshStore(store) {
   if (typeof store.refresh !== 'function') return;
   if (typeof store.withStoreLock === 'function') {
@@ -1480,6 +1200,7 @@ function connectorEventOptions(source, event = {}, options = {}) {
   if (source === 'slack') {
     return {
       ...base,
+      eventPayload: event,
       ...(event.channel ? { channelIds: [event.channel] } : {}),
       ...(event.ts || event.event_ts ? { sinceTs: event.thread_ts || event.ts || event.event_ts } : {}),
       limit: options.limit || 50,
@@ -1789,8 +1510,6 @@ function webhookIngressReadiness(config) {
   return [
     webhookGate('slack_events', '/v1/webhooks/slack/events', [
       ['SLACK_SIGNING_SECRET', config.slack?.signingSecret],
-      ['SLACK_EVENT_TENANT_ID', config.slack?.eventTenantId],
-      ['SLACK_EVENT_USER_ID', config.slack?.eventUserId],
     ]),
     webhookGate('google_drive_changes', '/v1/webhooks/google-drive/changes', [
       ['GDRIVE_WEBHOOK_TOKEN', config.gdrive?.webhookToken],
@@ -1911,6 +1630,19 @@ async function notifySourceConnectCallback(config, { sourceId, email, credential
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || data.code || `http_${response.status}`);
   }
+}
+
+function resolveOAuthReturnTo(config, value) {
+  if (!value) return '';
+  let url;
+  try {
+    url = new URL(String(value));
+  } catch {
+    throw new Error('OAuth returnTo must be a valid absolute URL');
+  }
+  const allowed = new Set(config.oauth?.allowedReturnOrigins || []);
+  if (!allowed.has(url.origin)) throw new Error(`OAuth return origin is not allowed: ${url.origin}`);
+  return url.origin;
 }
 
 function liveSmokeGuide(source) {

@@ -23,7 +23,13 @@ export class AssistantActionService {
       : await createAction();
     try {
       this.store.updateAssistantAction(action.id, { tenantId, userId, searchRunId, actionType, selectedResultIds, prompt, provider: provider || this.chatProvider.name, status: 'running' });
-      const response = await this.chatProvider.generate({ tenantId, userId, actionType, prompt, contextResults: selected });
+      let response;
+      try {
+        response = await this.chatProvider.generate({ tenantId, userId, actionType, prompt, contextResults: selected });
+      } catch (error) {
+        if (actionType !== 'summarize') throw error;
+        response = localSummary(selected);
+      }
       const artifactIds = [];
       if (actionType === 'create_powerpoint' || actionType === 'create_pdf') {
         const artifact = await this.artifactProvider.create({
@@ -80,4 +86,15 @@ export class AssistantActionService {
         : await failAction();
     }
   }
+}
+
+function localSummary(results) {
+  const lines = results.slice(0, 10).map((result, index) => (
+    `${index + 1}. ${result.oneLine || result.title || result.body || 'Untitled result'}`
+  ));
+  return {
+    text: `Summary generated from ${results.length} retrieved result(s).\n\n${lines.join('\n')}`,
+    citations: results.map((result) => ({ resultId: result.id, documentId: result.documentId })),
+    degraded: true,
+  };
 }

@@ -60,6 +60,22 @@ export EMAIL_READINESS_USER_EMAIL='<indexed-test-email-address>'
 ./infrastructure/azure/deploy-containerapp.sh
 ```
 
+For production embeddings without an external API quota, deploy the private BGE
+service into the same Container Apps environment:
+
+```bash
+export EMBEDDING_API_KEY="$(openssl rand -hex 32)"
+./infrastructure/azure/deploy-bge-embedding.sh
+
+export EMBEDDING_PROVIDER='bge_api'
+export EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'
+export EMBEDDING_DIM='768'
+export EMBEDDING_API_URL='https://<internal-bge-container-app-fqdn>'
+```
+
+Store `EMBEDDING_API_KEY` as a secret on the Unified Search API and worker. The
+BGE Container App uses internal ingress and is not exposed to the public internet.
+
 Deploy the background sync worker from the same image:
 
 ```bash

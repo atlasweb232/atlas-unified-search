@@ -1,6 +1,8 @@
 const base = process.env.UNIFIED_SEARCH_BASE || 'http://localhost:4420';
 const tenantId = process.env.UNIFIED_SEARCH_TENANT_ID || 'atlasweb';
 const userId = process.env.UNIFIED_SEARCH_USER_ID || 'local-user';
+const authToken = process.env.UNIFIED_SEARCH_AUTH_TOKEN || process.argv[2] || '';
+const authHeaders = authToken ? { Authorization: `Bearer ${authToken}` } : {};
 
 const fixtures = {
   slack: [{
@@ -51,7 +53,7 @@ const fixtures = {
 
 // Only seed sources that are actually registered/enabled on the server, so this
 // stays in sync with UNIFIED_SEARCH_ENABLED_SOURCES (Phase 1 = email/slack/gdrive).
-const connectorsResponse = await fetch(`${base}/v1/connectors`);
+const connectorsResponse = await fetch(`${base}/v1/connectors`, { headers: authHeaders });
 const connectorsData = await connectorsResponse.json();
 if (!connectorsResponse.ok || connectorsData.success === false) {
   throw new Error(`connectors: ${connectorsData.error || connectorsResponse.statusText}`);
@@ -65,7 +67,7 @@ for (const [source, sourceFixtures] of Object.entries(fixtures)) {
   }
   const response = await fetch(`${base}/v1/sync/${source}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify({ tenantId, userId, wait: true, options: { fixtures: sourceFixtures } }),
   });
   const data = await response.json();

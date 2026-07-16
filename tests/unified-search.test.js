@@ -11,6 +11,8 @@ import { SearchRunCoordinator } from '../src/searchRun.js';
 import { JsonSearchStore } from '../src/store.js';
 import { PostgresSearchStore } from '../src/stores/postgresStore.js';
 import { createConnectorRegistry } from '../src/connectors/index.js';
+import { SlackConnector } from '../src/connectors/slack.js';
+import { AssistantActionService } from '../src/assistant/actions.js';
 
 function config(dataDir) {
   return {
@@ -34,6 +36,66 @@ function config(dataDir) {
     dataFabric: { baseUrl: '', apiToken: '', readinessPath: '/health', recordsPath: '/records' },
   };
 }
+
+test('Slack event ingestion resolves readable sender names', async () => {
+  const connector = new SlackConnector({
+    slack: { botToken: 'test-token', channelIds: [], limit: 10 },
+  });
+  connector.call = async (method) => {
+    if (method === 'conversations.info') return { channel: { id: 'C1', name: 'general' } };
+    if (method === 'chat.getPermalink') return { permalink: 'https://example.test/message' };
+    if (method === 'users.info') {
+      return { user: { id: 'U1', profile: { display_name: 'Ada Lovelace' } } };
+    }
+    throw new Error(`Unexpected Slack method ${method}`);
+  };
+
+  const document = await connector.eventDocument({
+    tenantId: 'tenant',
+    userId: 'user',
+    scope: { tenantId: 'tenant', userId: 'user' },
+    event: { channel: 'C1', user: 'U1', text: 'Readable sender test', ts: '1700000000.000100' },
+  });
+
+  assert.equal(document.author, 'Ada Lovelace');
+});
+
+test('summary actions fall back to retrieved result text when the chat provider fails', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'atlas-summary-fallback-'));
+  try {
+    const store = new JsonSearchStore({ dataDir: dir });
+    await store.load();
+    const run = store.createSearchRun({
+      tenantId: 'tenant',
+      userId: 'user',
+      query: 'fallback summary',
+      selectedSources: ['slack'],
+      filters: {},
+    });
+    store.updateSearchRun(run.id, {
+      status: 'completed',
+      results: [{ id: 'result-1', documentId: 'doc-1', source: 'slack', oneLine: 'Deployment completed successfully.' }],
+    });
+    const assistant = new AssistantActionService({
+      store,
+      chatProvider: { name: 'unavailable', generate: async () => { throw new Error('quota exceeded'); } },
+      artifactProvider: {},
+    });
+
+    const action = await assistant.run({
+      tenantId: 'tenant',
+      userId: 'user',
+      searchRunId: run.id,
+      actionType: 'summarize',
+      selectedResultIds: ['result-1'],
+    });
+
+    assert.equal(action.status, 'completed');
+    assert.match(action.responseText, /Deployment completed successfully/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -205,6 +267,88 @@ test('postgres store persists document and checkpoint deletes', async () => {
   assert.ok(queries.some((query) => query.sql.includes('DELETE FROM unified_checkpoints') && query.params[0].includes('data_fabric:atlasweb:rakib:sync')));
   assert.equal(store.pendingDeletedDocumentIds.size, 0);
   assert.equal(store.pendingDeletedCheckpointKeys.size, 0);
+});
+
+test('postgres store only upserts documents and chunks changed since refresh', async () => {
+  const store = new PostgresSearchStore({ connectionString: 'postgres://example.invalid/test', ssl: false });
+  const queries = [];
+  store.pool = {
+    async connect() {
+      return {
+        async query(sql, params = []) {
+          queries.push({ sql, params });
+        },
+        release() {},
+      };
+    },
+  };
+  store.state.documents.existing = {
+    id: 'existing',
+    tenantId: 'atlasweb',
+    userId: 'rakib',
+    source: 'slack',
+  };
+  store.state.chunks.existing_chunk = {
+    id: 'existing_chunk',
+    documentId: 'existing',
+    tenantId: 'atlasweb',
+    userId: 'rakib',
+    source: 'slack',
+  };
+  store.upsertDocument({
+    id: 'changed',
+    tenantId: 'atlasweb',
+    userId: 'rakib',
+    source: 'slack',
+  }, [{
+    id: 'changed_chunk',
+    documentId: 'changed',
+    tenantId: 'atlasweb',
+    userId: 'rakib',
+    source: 'slack',
+    text: 'Realtime message',
+  }]);
+
+  await store.save();
+
+  const documentQueries = queries.filter((query) => query.sql.includes('INSERT INTO unified_documents'));
+  const chunkQueries = queries.filter((query) => query.sql.includes('INSERT INTO unified_chunks'));
+  assert.equal(documentQueries.length, 1);
+  assert.equal(documentQueries[0].params[0], 'changed');
+  assert.equal(chunkQueries.length, 1);
+  assert.equal(chunkQueries[0].params[0], 'changed_chunk');
+  assert.equal(store.pendingDocumentIds.size, 0);
+  assert.equal(store.pendingChunkIds.size, 0);
+});
+
+test('postgres store only upserts changed operational records', async () => {
+  const store = new PostgresSearchStore({ connectionString: 'postgres://example.invalid/test', ssl: false });
+  const queries = [];
+  store.pool = {
+    async connect() {
+      return {
+        async query(sql, params = []) {
+          queries.push({ sql, params });
+        },
+        release() {},
+      };
+    },
+  };
+  store.state.jobs.existing_job = { id: 'existing_job', source: 'slack', tenantId: 'atlasweb', userId: 'rakib' };
+  store.state.audit.push({ id: 'existing_event', eventType: 'existing' });
+  const changedJob = store.createJob({ source: 'slack', tenantId: 'atlasweb', userId: 'rakib' });
+  store.audit({ eventType: 'sync_start', tenantId: 'atlasweb', userId: 'rakib' });
+
+  await store.save();
+
+  const jobQueries = queries.filter((query) => query.sql.includes('INSERT INTO unified_jobs'));
+  const auditQueries = queries.filter((query) => query.sql.includes('INSERT INTO unified_audit'));
+  assert.equal(jobQueries.length, 1);
+  assert.equal(jobQueries[0].params[0], changedJob.id);
+  assert.equal(auditQueries.length, 1);
+  assert.notEqual(auditQueries[0].params[0], 'existing_event');
+  assert.equal(store.pendingJobIds.size, 0);
+  assert.equal(store.pendingAuditEventIds.size, 0);
 });
 
 test('search run source-agent timeout returns partial results', async () => {
@@ -470,6 +614,10 @@ test('unified search indexes fixture documents across all connector types', asyn
     assert.ok(run.searchRun.sourceStatuses.some((status) => status.source === 'email' && status.searchMode === 'federated_unconfigured'));
     assert.ok(run.results.some((result) => result.source === 'conference_bridge'));
     assert.ok(run.results.every((result) => result.sourceIcon && result.sourceLabel));
+
+    const recentRuns = await request(base, `/v1/search-runs?tenantId=${tenantId}&userId=${userId}&limit=5`);
+    assert.equal(recentRuns.runs[0].id, run.searchRun.id);
+    assert.deepEqual(recentRuns.runs[0].results, run.results);
 
     const stream = await fetch(`${base}/v1/search-runs/${run.searchRun.id}/events?tenantId=${tenantId}&userId=${userId}`);
     assert.equal(stream.status, 200);
@@ -809,25 +957,36 @@ test('slack events webhook verifies signatures and uses readiness-gated scoped e
       ...config(dir),
       auth: { required: true, token: 'api-token' },
       slack: {
-        botToken: 'xoxb-test',
-        channelIds: ['C1'],
+        botToken: '',
+        channelIds: [],
         limit: 10,
         signingSecret,
-        eventTenantId: 'atlasweb',
-        eventUserId: 'rakib',
+        eventTenantId: '',
+        eventUserId: '',
       },
+    });
+    await liveApp.locals.services.installations.upsert({
+      source: 'slack',
+      providerTeamId: 'T-live',
+      tenantId: 'atlasweb',
+      userId: 'rakib',
+      credentials: { botToken: 'xoxb-test', channelIds: ['C1'] },
     });
     const liveServer = liveApp.listen(0);
     await new Promise((resolve) => liveServer.once('listening', resolve));
     try {
       const liveBase = `http://127.0.0.1:${liveServer.address().port}`;
+      const routedEventBody = JSON.stringify({
+        ...JSON.parse(eventBody),
+        team_id: 'T-live',
+      });
       const accepted = await fetch(`${liveBase}/v1/webhooks/slack/events`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...slackSignatureHeaders(signingSecret, eventBody),
+          ...slackSignatureHeaders(signingSecret, routedEventBody),
         },
-        body: eventBody,
+        body: routedEventBody,
       });
       assert.equal(accepted.status, 202);
       const acceptedBody = await accepted.json();
@@ -836,6 +995,17 @@ test('slack events webhook verifies signatures and uses readiness-gated scoped e
       assert.equal(acceptedBody.eventTrigger.channelId, 'C1');
       assert.equal(acceptedBody.job.tenantId, 'atlasweb');
       assert.equal(acceptedBody.job.userId, 'rakib');
+
+      const duplicate = await fetch(`${liveBase}/v1/webhooks/slack/events`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...slackSignatureHeaders(signingSecret, routedEventBody),
+        },
+        body: routedEventBody,
+      });
+      assert.equal(duplicate.status, 200);
+      assert.equal((await duplicate.json()).duplicate, true);
 
       const audit = await fetch(`${liveBase}/v1/audit?tenantId=atlasweb&userId=rakib&eventType=connector_event_received`, {
         headers: { Authorization: 'Bearer api-token' },

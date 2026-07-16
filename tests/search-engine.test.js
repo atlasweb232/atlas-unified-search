@@ -189,6 +189,49 @@ test('SearchEngine falls back to default weights when none supplied', () => {
   assert.equal(engine.candidateMultiplier, 5);
 });
 
+test('SearchEngine falls back to lexical retrieval when query embedding fails', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'uss-fallback-'));
+  try {
+    const store = new JsonSearchStore({ dataDir: dir });
+    await store.load();
+    const document = doc({
+      sourceId: 'slack-target',
+      title: 'Realtime verification',
+      summary: 'Atlas realtime optimized verification completed',
+      body: 'Atlas realtime optimized verification completed',
+    });
+    const chunks = createChunks(document).map((chunk) => ({ ...chunk, embedding: new Array(8).fill(0) }));
+    store.upsertDocument(document, chunks);
+    const embedder = {
+      dimensions: 8,
+      model: 'unavailable',
+      version: 'unavailable:8',
+      async embed() {
+        throw new Error('provider quota exceeded');
+      },
+    };
+    const engine = new SearchEngine({ store, embedder, embeddingDim: 8 });
+
+    const results = await engine.search({
+      tenantId: 'tenant-a',
+      userId: 'user-1',
+      query: 'realtime optimized verification',
+      sources: ['slack'],
+    });
+
+    assert.equal(results[0]?.id, document.id);
+    const noMatch = await engine.search({
+      tenantId: 'tenant-a',
+      userId: 'user-1',
+      query: 'words absent from corpus',
+      sources: ['slack'],
+    });
+    assert.deepEqual(noMatch, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 // ─── result parity ───────────────────────────────────────────────────────────
 
 test('search returns identical top document with default and custom multiplier', async () => {

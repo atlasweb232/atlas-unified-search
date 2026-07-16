@@ -43,6 +43,8 @@ export function loadConfig() {
     embeddingDim: number('EMBEDDING_DIM', 768),
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     embeddingModel: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
+    embeddingApiUrl: process.env.EMBEDDING_API_URL || '',
+    embeddingApiKey: process.env.EMBEDDING_API_KEY || '',
     chat: {
       provider: process.env.CHAT_PROVIDER || '',
       model: process.env.CHAT_MODEL || '',
@@ -78,6 +80,10 @@ export function loadConfig() {
       // TTL for minted user identity tokens (seconds).
       tokenTtlSeconds: number('ONBOARDING_TOKEN_TTL_SECONDS', 3600),
     },
+    oauth: {
+      allowedReturnOrigins: list('OAUTH_ALLOWED_RETURN_ORIGINS'),
+    },
+    connectorCredentialEncryptionKey: process.env.CONNECTOR_CREDENTIAL_ENCRYPTION_KEY || process.env.IDENTITY_JWT_SECRET || '',
     cors: {
       origins: list('UNIFIED_SEARCH_CORS_ORIGINS'),
     },

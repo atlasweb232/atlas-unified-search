@@ -244,6 +244,14 @@ export class JsonSearchStore {
     return this.state.searchRuns[id] || null;
   }
 
+  listSearchRuns({ tenantId = '', userId = '', limit = 20 } = {}) {
+    return Object.values(this.state.searchRuns)
+      .filter((run) => (!tenantId || run.tenantId === tenantId))
+      .filter((run) => (!userId || run.userId === userId))
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+      .slice(0, Math.min(Math.max(Number(limit) || 20, 1), 100));
+  }
+
   createAssistantAction(action) {
     const id = `act_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const row = {
@@ -420,30 +428,63 @@ export class SearchEngine {
 
   async indexDocuments(documents, { chunker }) {
     let indexed = 0;
-    for (const document of documents) {
-      const chunks = chunker(document);
+    const prepared = documents.map((document) => ({ document, chunks: chunker(document) }));
+    const chunks = prepared.flatMap((item) => item.chunks);
+    if (typeof this.embedder.embedMany === 'function') {
+      const batchSize = 32;
+      const batches = [];
+      for (let offset = 0; offset < chunks.length; offset += batchSize) {
+        batches.push(chunks.slice(offset, offset + batchSize));
+      }
+      for (let offset = 0; offset < batches.length; offset += 2) {
+        const group = batches.slice(offset, offset + 2);
+        const vectorsByBatch = await Promise.all(
+          group.map((batch) => this.embedder.embedMany(batch.map((chunk) => chunk.text))),
+        );
+        group.forEach((batch, batchIndex) => {
+          batch.forEach((chunk, chunkIndex) => {
+            chunk.embedding = vectorsByBatch[batchIndex][chunkIndex];
+            chunk.embeddingModel = this.embedder.model;
+            chunk.embeddingVersion = this.embedder.version;
+          });
+        });
+      }
+    } else {
       for (const chunk of chunks) {
         chunk.embedding = await this.embedder.embed(chunk.text);
         chunk.embeddingModel = this.embedder.model;
         chunk.embeddingVersion = this.embedder.version;
       }
-      this.store.upsertDocument(document, chunks);
+    }
+    for (const { document, chunks: documentChunks } of prepared) {
+      this.store.upsertDocument(document, documentChunks);
       indexed += 1;
     }
     return indexed;
   }
 
   async search({ tenantId, userId, query, sources = [], filters = {}, limit = 10 }) {
-    const queryVector = await this.embedder.embed(query);
-    const candidateLimit = Math.max(limit * this.candidateMultiplier, 50);
+    let queryVector;
+    let vectorWeight = this.weights.vector;
+    let candidateLimit = Math.max(limit * this.candidateMultiplier, 50);
+    let lexicalOnly = false;
+    try {
+      queryVector = await this.embedder.embed(query);
+    } catch {
+      queryVector = new Array(this.embeddingDim).fill(0);
+      vectorWeight = 0;
+      lexicalOnly = true;
+      candidateLimit = Math.max(this.store.listChunks().length, candidateLimit);
+    }
     const rawCandidates = this.store.searchChunks({
       tenantId, userId, sources, queryVector, candidateLimit, filters,
     });
     const best = new Map();
     for (const { document, chunk, distance } of rawCandidates) {
       const lexical = lexicalScore(query, `${document.title} ${document.summary} ${chunk.text}`);
+      if (lexicalOnly && lexical === 0) continue;
       const recency = recencyBoost(document.timestamp);
-      const score = distance * this.weights.vector
+      const score = distance * vectorWeight
         + lexical * this.weights.lexical
         + recency * this.weights.recency;
       const existing = best.get(document.id);
@@ -459,6 +500,7 @@ export class SearchEngine {
         source: document.source,
         title: document.title,
         oneLine: document.summary || matchedChunk,
+        body: document.body || '',
         author: document.author,
         timestamp: document.timestamp,
         container: document.container,

@@ -78,6 +78,8 @@ append_value_env() {
 }
 
 append_secret_env "SLACK_BOT_TOKEN" "slack-bot-token"
+append_secret_env "EMBEDDING_API_KEY" "embedding-api-key"
+append_secret_env "CONNECTOR_CREDENTIAL_ENCRYPTION_KEY" "connector-credential-encryption-key"
 append_secret_env "GOOGLE_CLIENT_ID" "google-client-id"
 append_secret_env "GOOGLE_CLIENT_SECRET" "google-client-secret"
 append_secret_env "GOOGLE_REFRESH_TOKEN" "google-refresh-token"
@@ -85,6 +87,9 @@ append_secret_env "GOOGLE_SERVICE_ACCOUNT_JSON" "google-service-account-json"
 append_secret_env "AZURE_STORAGE_CONNECTION_STRING" "azure-storage"
 append_secret_env "DATA_FABRIC_API_TOKEN" "data-fabric-api-token"
 append_value_env "SLACK_CHANNEL_IDS"
+append_value_env "EMBEDDING_API_URL"
+append_value_env "EMBEDDING_MODEL"
+append_value_env "EMBEDDING_DIM"
 append_value_env "GDRIVE_FOLDER_IDS"
 append_value_env "CONFERENCE_BLOB_CONTAINERS"
 append_value_env "KNOWLEDGE_BASE_ROOT"

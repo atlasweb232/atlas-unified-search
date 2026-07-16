@@ -19,6 +19,7 @@ function baseConfig(dataDir) {
     auth: { required: false, token: '' },
     identity: { mode: 'jwt', jwtSecret: 'oauth-secret', jwtIssuer: '', jwtAudience: '', tenantKeys: {} },
     onboarding: { adminToken: '', tokenTtlSeconds: 3600 },
+    oauth: { allowedReturnOrigins: ['http://localhost:4421'] },
     cors: { origins: [] },
     sourcePermissions: {},
     connectorTokens: {},
@@ -103,6 +104,29 @@ test('slack oauth callback rejects a forged/missing state', async () => {
       assert.equal(forged.status, 400, 'forged state must be rejected');
       const missing = await fetch(`${base}/v1/onboarding/oauth/slack/callback?code=stub:T1:U1`);
       assert.equal(missing.status, 400, 'missing state must be rejected');
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test('slack oauth only returns credentials to an allowlisted popup origin', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'uss-oauth-return-'));
+  try {
+    await withServer(baseConfig(dir), async (base) => {
+      const denied = await fetch(`${base}/v1/onboarding/oauth/slack/start?returnTo=${encodeURIComponent('https://attacker.example/callback')}`);
+      assert.equal(denied.status, 400);
+      assert.match((await denied.json()).error, /not allowed/);
+
+      const start = await (await fetch(`${base}/v1/onboarding/oauth/slack/start?returnTo=${encodeURIComponent('http://localhost:4421/oauth/result')}`)).json();
+      const callback = await fetch(
+        `${base}/v1/onboarding/oauth/slack/callback?code=${encodeURIComponent('stub:T-RETURN:U-RETURN:user@example.test')}&state=${encodeURIComponent(start.state)}`,
+        { redirect: 'manual' },
+      );
+      assert.equal(callback.status, 302);
+      const location = new URL(callback.headers.get('location'));
+      assert.equal(location.origin, 'http://localhost:4421');
+      assert.ok(new URLSearchParams(location.hash.slice(1)).get('token'));
     });
   } finally {
     await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
