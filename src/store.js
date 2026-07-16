@@ -276,6 +276,24 @@ export class JsonSearchStore {
     return row;
   }
 
+  upsertArtifact(artifact) {
+    const id = artifact?.id || `art_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const existing = this.state.artifacts[id] || {};
+    const row = {
+      ...existing,
+      id,
+      createdAt: existing.createdAt || artifact.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...redactObject(artifact),
+    };
+    this.state.artifacts[id] = row;
+    return row;
+  }
+
+  getArtifact(id) {
+    return this.state.artifacts[id] || null;
+  }
+
   searchChunks({ tenantId, userId, sources = [], queryVector, candidateLimit, filters = {} }) {
     const sourceSet = new Set(sources.filter(Boolean));
     const candidates = [];
